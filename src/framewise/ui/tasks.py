@@ -25,9 +25,13 @@ class _Task(QRunnable):
         try:
             result = self.fn()
         except Exception as e:  # delivered to on_error on the UI thread
-            self.signals.failed.emit(e)
+            outcome, payload = self.signals.failed, e
         else:
-            self.signals.done.emit(result)
+            outcome, payload = self.signals.done, result
+        try:
+            outcome.emit(payload)
+        except RuntimeError:  # the window that asked has been closed: nobody is waiting for the result
+            log.debug("Dropped a background result for a closed window")
 
 
 class TaskRunner(QObject):
@@ -38,9 +42,12 @@ class TaskRunner(QObject):
         self.pool = QThreadPool(self)
         self.pool.setMaxThreadCount(max_threads)
         self._live: set[_Task] = set()
+        self.closed = False
 
     def run(self, fn: Callable[[], Any], on_done: Callable[[Any], None] | None = None,
             on_error: Callable[[Exception], None] | None = None) -> None:
+        if self.closed:
+            return
         task = _Task(fn)
         task.setAutoDelete(False)
         self._live.add(task)
@@ -57,4 +64,6 @@ class TaskRunner(QObject):
         self.pool.start(task)
 
     def wait(self, msecs: int = 5000) -> bool:
+        """Stop accepting work and wait for running tasks (used when the window closes)."""
+        self.closed = True
         return self.pool.waitForDone(msecs)

@@ -18,6 +18,9 @@ class Settings:
     default_quality: int = 18
     last_open_dir: str = ""
     recent_projects: list[str] = field(default_factory=list)
+    preview_width: int = 1280       # longest edge of preview frames
+    preview_ai: bool = False        # run the AI upscaler for preview frames
+    workspace: str = "video"        # last used studio
 
     def add_recent(self, path: str, limit: int = 8) -> None:
         self.recent_projects = [path] + [p for p in self.recent_projects if p != path]

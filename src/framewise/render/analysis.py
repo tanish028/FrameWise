@@ -35,7 +35,9 @@ def detect_black_bars(ffmpeg: Path, source: Source, info: MediaInfo, transform: 
         cmd = [ffmpeg, "-hide_banner", "-v", "info", "-y"]
         if t > 0:
             cmd += ["-ss", f"{t:.3f}"]
-        cmd += [*input_args(source), "-map", "0:v:0", "-vf", vf, "-frames:v", "12", "-f", "null", "-"]
+        # cropdetect ignores the first frames it sees, so a still image is looped to give it some
+        loop = ["-loop", "1"] if info.is_still else []
+        cmd += [*loop, *input_args(source), "-map", "0:v:0", "-vf", vf, "-frames:v", "12", "-f", "null", "-"]
         out = run_cancellable(cmd, cancel=cancel)
         rects = parse_cropdetect(out)
         if rects:

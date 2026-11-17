@@ -119,14 +119,20 @@ class ProjectDocument:
         self.undo.set_clean()
 
     # -- edits (undoable) -------------------------------------------------
-    def add_media(self, paths: list[str], defaults: Edit | None = None) -> list[MediaItem]:
+    def add_media(self, paths: list[str], defaults: Edit | None = None, sequences: dict | None = None,
+                  defaults_for=None) -> list[MediaItem]:
+        """Import files (one undo step). `sequences` maps a first-frame path to its SequenceInfo;
+        `defaults_for(path)` may return per-file default edits (e.g. images without AI upscaling)."""
+        sequences = sequences or {}
         existing = {str(Path(i.path).resolve()) for i in self.project.items}
         new_items = []
         for p in paths:
             key = str(Path(p).resolve())
             if key not in existing:
                 existing.add(key)
-                new_items.append(MediaItem(path=str(Path(p)), edit=defaults or Edit()))
+                edit = defaults_for(p) if defaults_for else None
+                new_items.append(MediaItem(path=str(Path(p)), edit=edit or defaults or Edit(),
+                                           sequence=sequences.get(p)))
         if new_items:
             self.undo.push(_AddItems(self, new_items,
                                      "Import media" if len(new_items) > 1 else f"Import {new_items[0].name}"))

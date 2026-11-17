@@ -20,6 +20,9 @@ framewise = "framewise.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"framewise.ui" = ["icons/*.svg", "icons/*.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 qt_api = "pyside6"

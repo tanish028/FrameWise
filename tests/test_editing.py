@@ -417,6 +417,11 @@ def test_black_bar_detection_suggests_exact_crop(ff_tools, tmp_path):
     info = probe(ff_tools.ffprobe, src)
     rect = detect_black_bars(ff_tools.ffmpeg, Source(src), info, Transform(), samples=3)
     assert rect is not None and abs(rect.y - 20) <= 2 and abs(rect.h - 80) <= 4 and rect.w >= 156
+    still = tmp_path / "letterbox.png"
+    ff("-f", "lavfi", "-i", "testsrc2=s=160x80:d=0.04", "-vf", "pad=160:120:0:20:black", "-frames:v", "1",
+       "-update", "1", still)
+    rect = detect_black_bars(ff_tools.ffmpeg, Source(still), probe(ff_tools.ffprobe, still), Transform())
+    assert rect is not None and abs(rect.y - 20) <= 2, "still images are measured too"
     plain = tmp_path / "plain.mp4"
     ff("-f", "lavfi", "-i", "testsrc2=s=160x120:r=25:d=1", "-c:v", "libx264", plain)
     assert detect_black_bars(ff_tools.ffmpeg, Source(plain), probe(ff_tools.ffprobe, plain), Transform(), samples=2) is None
