@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "framewise"
+version = "0.1.0"
+description = "Desktop video editor with local, GPU-accelerated AI tools (upscaling and more)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Tanish Anand" }]
+dependencies = ["PySide6>=6.6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-qt>=4.4"]
+
+[project.gui-scripts]
+framewise = "framewise.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyside6"
+markers = ["ffmpeg: needs ffmpeg/ffprobe on PATH"]
