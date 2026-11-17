@@ -28,6 +28,21 @@ def part_path(path: Path) -> Path:
     return path.with_name(path.stem + ".part" + path.suffix)
 
 
+def progress_snapshot(progress_file: Path) -> tuple:
+    """(frame, total_size, out_time_us) from the latest -progress block. ffmpeg keeps appending
+    blocks even when stuck, so the values, not the file size, show whether it is moving."""
+    try:
+        text = progress_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ()
+    latest: dict[str, str] = {}
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key in ("frame", "total_size", "out_time_us"):
+            latest[key] = value
+    return (latest.get("frame"), latest.get("total_size"), latest.get("out_time_us"))
+
+
 def read_progress_frame(progress_file: Path) -> int | None:
     """Last `frame=` value from an ffmpeg `-progress` file."""
     try:
@@ -109,12 +124,21 @@ def transcode_args(ffmpeg: Path, src: Path, part: Path, progress: Path, plan: Re
 def transcode(ffmpeg: Path, src: Path, out: Path, plan: RenderPlan, *, encoder: str, quality: int,
               has_audio: bool, max_seconds: float | None, work_dir: Path,
               cancel: threading.Event | None = None, on_frames: Callable[[int], None] | None = None) -> None:
+    """Render without AI upscaling.
+
+    Default edits: one ffmpeg pass, exactly as in Phase 1. When the audio needs filtering (trim or
+    speed), the video is rendered first and the processed audio is added in a second, copy-only pass,
+    the same audio step the AI path uses. Filtering audio and video in one process can deadlock
+    ffmpeg 8 (atempo + padding), and sharing one audio step keeps both paths identical."""
     work_dir.mkdir(parents=True, exist_ok=True)
     prog = work_dir / "progress.txt"
     prog.unlink(missing_ok=True)
     part = part_path(out)
-    cmd = transcode_args(ffmpeg, src, part, prog, plan, encoder=encoder, quality=quality,
-                         has_audio=has_audio, max_seconds=max_seconds)
+    two_pass = has_audio and bool(plan.audio_filters)
+    video_out = work_dir / "video.mp4" if two_pass else part
+    cmd = transcode_args(ffmpeg, src, part_path(video_out) if two_pass else part, prog, plan,
+                         encoder=encoder, quality=quality, has_audio=has_audio and not two_pass,
+                         max_seconds=max_seconds)
 
     def tick() -> None:
         n = read_progress_frame(prog)
@@ -122,7 +146,14 @@ def transcode(ffmpeg: Path, src: Path, out: Path, plan: RenderPlan, *, encoder: 
             on_frames(n)
 
     try:
-        run_cancellable(cmd, cancel=cancel, on_tick=tick)
+        run_cancellable(cmd, cancel=cancel, on_tick=tick, progress=lambda: progress_snapshot(prog))
+        if two_pass:
+            os.replace(part_path(video_out), video_out)
+            mux_prog = work_dir / "mux-progress.txt"
+            mux_prog.unlink(missing_ok=True)
+            run_cancellable(mux_args(ffmpeg, ["-i", video_out], src, part, plan, with_audio=True,
+                                     max_seconds=max_seconds, progress_file=mux_prog),
+                            cancel=cancel, progress=lambda: progress_snapshot(mux_prog))
     except BaseException:
         part.unlink(missing_ok=True)
         raise
@@ -182,9 +213,13 @@ def concat_list_text(segments: Sequence[Path]) -> str:
     return "".join("file '{}'\n".format(p.resolve().as_posix().replace("'", "'\\''")) for p in segments)
 
 
-def join_args(ffmpeg: Path, list_file: Path, src: Path, part: Path, plan: RenderPlan, *,
-              with_audio: bool, max_seconds: float | None) -> Cmd:
-    cmd: Cmd = [ffmpeg, "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", list_file]
+def mux_args(ffmpeg: Path, video_input: Sequence, src: Path, part: Path, plan: RenderPlan, *,
+             with_audio: bool, max_seconds: float | None, progress_file: Path | None = None) -> Cmd:
+    """Copy finished video and add the source's (trimmed, re-timed) audio."""
+    cmd: Cmd = [ffmpeg, "-v", "error", "-y"]
+    if progress_file is not None:
+        cmd += ["-nostats", "-progress", progress_file]
+    cmd += [*video_input]
     if with_audio:
         if plan.trimmed:
             cmd += [*audio_window_args(plan)]
@@ -197,6 +232,12 @@ def join_args(ffmpeg: Path, list_file: Path, src: Path, part: Path, plan: Render
     return cmd
 
 
+def join_args(ffmpeg: Path, list_file: Path, src: Path, part: Path, plan: RenderPlan, *,
+              with_audio: bool, max_seconds: float | None, progress_file: Path | None = None) -> Cmd:
+    return mux_args(ffmpeg, ["-f", "concat", "-safe", "0", "-i", list_file], src, part, plan,
+                    with_audio=with_audio, max_seconds=max_seconds, progress_file=progress_file)
+
+
 def join_segments(ffmpeg: Path, segments: list[Path], src: Path, out: Path, plan: RenderPlan, *,
                   with_audio: bool, max_seconds: float | None, work_dir: Path,
                   cancel: threading.Event | None = None) -> None:
@@ -206,9 +247,14 @@ def join_segments(ffmpeg: Path, segments: list[Path], src: Path, out: Path, plan
     list_file = work_dir / "segments.txt"
     list_file.write_text(concat_list_text(segments), encoding="utf-8")
     part = part_path(out)
+    # Phase 1 joins (no audio filters) keep their exact command; filtered audio gets the stall watchdog
+    prog = work_dir / "join-progress.txt" if plan.audio_filters else None
+    if prog is not None:
+        prog.unlink(missing_ok=True)
     try:
         run_cancellable(join_args(ffmpeg, list_file, src, part, plan, with_audio=with_audio,
-                                  max_seconds=max_seconds), cancel=cancel)
+                                  max_seconds=max_seconds, progress_file=prog), cancel=cancel,
+                        progress=(lambda: progress_snapshot(prog)) if prog else None)
     except BaseException:
         part.unlink(missing_ok=True)
         raise

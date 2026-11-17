@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -26,12 +27,18 @@ def run_cancellable(
     cwd: str | os.PathLike | None = None,
     tick: float = 0.5,
     expect_failure: bool = False,
+    progress: Callable[[], object] | None = None,
+    stall_timeout: float = 180.0,
 ) -> str:
     """Run cmd and return its combined stdout/stderr.
 
     Raises ToolError on a non-zero exit (logged as an error unless `expect_failure`)
     and Cancelled if `cancel` is set while running;
     the child process is always killed if this function does not return normally.
+
+    Stall watchdog: if `progress` is given, it is polled every tick; when its value has not
+    changed for `stall_timeout` seconds the process is killed and ToolError raised, so a hung
+    tool can never freeze a render forever.
     """
     args = [str(c) for c in cmd]
     log.debug("run: %s", " ".join(args))
@@ -41,6 +48,7 @@ def run_cancellable(
                                  cwd=cwd, creationflags=_creation_flags())
         except OSError as e:
             raise ToolError(f"Could not start {Path(args[0]).name}: {e}") from e
+        last_value, last_change = object(), time.monotonic()
         try:
             while True:
                 try:
@@ -51,6 +59,17 @@ def run_cancellable(
                         raise Cancelled()
                     if on_tick is not None:
                         on_tick()
+                    if progress is not None:
+                        value = progress()
+                        now = time.monotonic()
+                        if value != last_value:
+                            last_value, last_change = value, now
+                        elif now - last_change > stall_timeout:
+                            log.error("%s made no progress for %.0f s; stopping it", Path(args[0]).name, stall_timeout)
+                            raise ToolError(
+                                f"{Path(args[0]).name} stopped making progress for {stall_timeout:.0f} seconds "
+                                "and was stopped. This is usually a bug in the installed ffmpeg version. "
+                                "Please report it with the log file (Tools → Open logs folder).")
         except BaseException:
             if p.poll() is None:
                 p.kill()

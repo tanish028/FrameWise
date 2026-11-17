@@ -122,13 +122,25 @@ def test_full_ordering_around_ai_boundary():
     assert plan.video_filters(before_ai=False) == ["scale=1200:1600:flags=lanczos"]  # 4x model → resized to 2x
     assert plan.timing_filters(0)[-1] == "fps=30000/1001"
     dur = f"{float(Fraction(plan.out_frames) / plan.window.fps):.6f}"
-    assert plan.audio_filters == ("asetpts=PTS-STARTPTS", "rubberband=tempo=0.5:transients=crisp:window=short",
-                                  f"apad=whole_dur={dur}", f"atrim=end={dur}")
+    assert plan.audio_filters == ("asetpts=PTS-STARTPTS", "apad=pad_dur=0.5",
+                                  "rubberband=tempo=0.5:transients=crisp:window=short", f"atrim=end={dur}")
     atempo = build_plan(edit, info(), stretcher="atempo").audio_filters
-    assert atempo[1] == "atempo=0.5" and atempo[-1] == f"atrim=end={dur}" 
+    assert atempo[2] == "atempo=0.5" and atempo[-1] == f"atrim=end={dur}"
     # crop is in the rotated (1080x1920) frame and the upscaler sees the cropped size
     assert plan.oriented_size == (1080, 1920) and plan.base_size == (600, 800)
     assert plan.upscale.engine_scale == 4 and plan.out_size == (1200, 1600)
+
+
+@pytest.mark.parametrize("stretcher", ["rubberband", "atempo"])
+@pytest.mark.parametrize("rate", [0.25, 1.0, 2.0, 4.0])
+def test_audio_padding_always_comes_before_the_stretch(stretcher, rate):
+    """Padding after atempo deadlocks ffmpeg 8 at fast speeds; the final step must be the exact cut."""
+    af = build_plan(no_ai(trim=Trim(start=1).validated(), speed=Speed(rate=rate)), info(),
+                    stretcher=stretcher).audio_filters
+    names = [f.split("=")[0] for f in af]
+    assert names[0] == "asetpts" and names[1] == "apad" and names[-1] == "atrim"
+    assert names.count("apad") == 1
+    assert all(n in ("rubberband", "atempo") for n in names[2:-1])
 
 
 def test_crop_is_clamped_to_rotated_frame_and_full_frame_crop_is_dropped():
@@ -230,6 +242,29 @@ def test_join_command_identical_to_phase1(phase1, tmp_path, with_audio, max_seco
     assert (tmp_path / "segments.txt").read_text() == ffmpeg_ops.concat_list_text(segs)
 
 
+def _capture_runs(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ffmpeg_ops, "run_cancellable", lambda cmd, **kw: calls.append([str(c) for c in cmd]) or "")
+    monkeypatch.setattr(ffmpeg_ops.os, "replace", lambda *a: None)
+    return calls
+
+
+def test_default_export_is_one_pass_and_filtered_audio_gets_its_own_pass(monkeypatch, tmp_path):
+    calls = _capture_runs(monkeypatch)
+    kw = dict(encoder="libx264", quality=18, has_audio=True, max_seconds=None, work_dir=tmp_path)
+    ffmpeg_ops.transcode(FF, Path("a.mp4"), tmp_path / "o.mp4", build_plan(no_ai(), info()), **kw)
+    assert len(calls) == 1 and "-map" in calls[0] and "0:a:0" in calls[0]
+    calls.clear()
+    plan = build_plan(no_ai(speed=Speed(rate=2)), info())
+    ffmpeg_ops.transcode(FF, Path("a.mp4"), tmp_path / "o.mp4", plan, **kw)
+    video, mux = calls
+    assert "-af" not in video and "0:a:0" not in video and "1:a:0" not in video, "video pass carries no audio"
+    assert mux[mux.index("-c:v") + 1] == "copy" and "-af" in mux and "-progress" in mux
+    calls.clear()
+    ffmpeg_ops.transcode(FF, Path("a.mp4"), tmp_path / "o.mp4", plan, **{**kw, "has_audio": False})
+    assert len(calls) == 1
+
+
 def test_concat_list_escapes_quotes(tmp_path):
     text = ffmpeg_ops.concat_list_text([tmp_path / "Tanish's clips" / "a.mp4"])
     assert text.startswith("file '") and text.endswith("/Tanish'\\''s clips/a.mp4'\n")
@@ -288,3 +323,25 @@ def test_every_implemented_filter_is_covered_by_a_feature():
     for stretcher in ("rubberband", "atempo"):
         plan = build_plan(edit, info(), stretcher=stretcher)
         assert plan.requires <= declared, plan.requires - declared
+
+
+# --- chunk layout (AI path) ------------------------------------------------------------------------
+@pytest.mark.parametrize("total,seg,rate", [(50, 16, 1.0), (482, 240, 1.0), (50, 16, 2.0), (50, 12, 4.0),
+                                             (43, 8, 0.7), (240, 240, 1.0), (5, 240, 1.0), (241, 240, 0.25)])
+def test_chunk_ranges_cover_everything_and_never_end_with_a_tiny_chunk(total, seg, rate):
+    from framewise.render.pipeline import MIN_TAIL_OUT_FRAMES, chunk_ranges
+    plan = build_plan(no_ai(speed=Speed(rate=rate)), info(frames=total))
+    ranges = chunk_ranges(total, seg, plan)
+    assert ranges[0][0] == 0 and sum(n for _, n in ranges) == total
+    assert all(a + n == b for (a, n), (b, _) in zip(ranges, ranges[1:])), "chunks must be contiguous"
+    assert all(n <= seg for _, n in ranges[:-1])
+    if len(ranges) > 1:
+        assert plan.chunk_out_frames(*ranges[-1]) >= MIN_TAIL_OUT_FRAMES
+    assert sum(plan.chunk_out_frames(s, n) for s, n in ranges) == plan.out_frames
+
+
+def test_chunk_layout_unchanged_when_no_tiny_tail():
+    from framewise.render.pipeline import chunk_ranges
+    plan = build_plan(Edit(), info(frames=720))
+    assert chunk_ranges(720, 240, plan) == [(0, 240), (240, 240), (480, 240)]
+    assert chunk_ranges(482, 240, build_plan(Edit(), info(frames=482))) == [(0, 240), (240, 242)]

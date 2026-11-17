@@ -12,8 +12,10 @@ Later steps insert their stages (deinterlace, denoise, stabilize before the AI b
 canvas, colour, look, sharpen, finish after it) without changing this contract.
 
 Audio speed changes use rubberband when this ffmpeg has it (attacks stay within ~±25 ms of where
-they belong at every speed), else chained atempo (up to ~0.1 s early at 0.25×). Either way the
-stretched audio is padded/cut to exactly the video's duration so it can never shorten the video.
+they belong at every speed), else chained atempo (up to ~0.1 s early at 0.25×). The audio window is
+padded with silence *before* stretching and cut to the video's exact duration after it, so audio can
+never shorten the video. (Padding *after* atempo deadlocks ffmpeg 8 at fast speeds; and audio is
+always filtered in its own ffmpeg process, see ffmpeg_ops.transcode, for the same reason.)
 
 Rounding of half frames follows ffmpeg (half away from zero), never Python's round-half-even.
 
@@ -132,6 +134,7 @@ class RenderPlan:
 # ---------------------------------------------------------------------------------- helpers
 
 STRETCHERS = ("rubberband", "atempo")
+AUDIO_PREPAD = 0.5  # seconds of silence appended before stretching; covers what stretchers drop at the end
 
 
 def round_half_up(x: Fraction | float) -> int:
@@ -279,11 +282,12 @@ def build_plan(edit: Edit, info: MediaInfo, *, max_seconds: float | None = None,
         tf = timing_filters(rate, window.fps)
         nodes.append(VNode(Stage.TIME, tuple(tf[:2]), frozenset({"settb", "setpts"})))
         nodes.append(VNode(Stage.FPS, (tf[2],), frozenset({"fps", "tpad"})))
-        audio.extend(stretch_filters(rate, stretcher))
     if rate != 1 or trimmed:
         # exact length: never shorter than the video (which would cut frames), never longer
         dur = float(Fraction(out_frames) / window.fps)
-        audio += [f"apad=whole_dur={dur:.6f}", f"atrim=end={dur:.6f}"]
+        audio.append(f"apad=pad_dur={AUDIO_PREPAD}")
+        audio.extend(stretch_filters(rate, stretcher))
+        audio.append(f"atrim=end={dur:.6f}")
 
     nodes.sort(key=lambda n: n.stage)
     return RenderPlan(window=window, fps_str=info.fps_str, trimmed=trimmed, rate=rate,

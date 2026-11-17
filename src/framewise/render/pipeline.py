@@ -26,6 +26,25 @@ log = get_logger("pipeline")
 # Edit sections whose values change the pixels of an upscaled chunk (audio only affects the final join)
 CHUNK_SECTIONS = ("trim", "transform", "color", "filter", "enhance", "speed")
 
+# A final chunk this short (in output frames) is folded into the one before it. ffmpeg 8's concat
+# demuxer mis-times a 1-2 frame chunk that follows normal ones (it has no B-frame delay), which
+# made joined videos 2 frames too long. Verified on ffmpeg 8.0.1 for speeds 0.7x-4x.
+MIN_TAIL_OUT_FRAMES = 8
+
+
+def chunk_ranges(total: int, segment_frames: int, plan: RenderPlan) -> list[tuple[int, int]]:
+    """(start, count) of each chunk, in window frames. Deterministic, so resume finds the same chunks."""
+    ranges: list[tuple[int, int]] = []
+    start = 0
+    while start < total:
+        count = min(segment_frames, total - start)
+        rest = total - (start + count)
+        if 0 < rest and plan.chunk_out_frames(start + count, rest) < MIN_TAIL_OUT_FRAMES:
+            count += rest
+        ranges.append((start, count))
+        start += count
+    return ranges
+
 
 @dataclass(frozen=True)
 class Progress:
@@ -49,6 +68,11 @@ def work_dir_for(spec: RenderSpec) -> Path:
 def estimate_chunk_bytes(w: int, h: int, scale: int, frames: int) -> int:
     """Rough upper bound for one chunk's PNG frames (input + upscaled)."""
     return int((w * h) * (1 + scale * scale) * 3 * frames * 0.8)
+
+
+def _check(cancel: threading.Event) -> None:
+    if cancel.is_set():
+        raise Cancelled()
 
 
 def _validate(spec: RenderSpec) -> None:
@@ -135,7 +159,7 @@ def _run_upscale(spec: RenderSpec, tools: ToolSet, info: MediaInfo, plan: Render
              sp.out_width, sp.out_height, plan.model, sp.engine_scale, plan.rate)
 
     work.mkdir(parents=True, exist_ok=True)
-    chunk = min(spec.segment_frames, total)
+    chunk = min(spec.segment_frames + MIN_TAIL_OUT_FRAMES * 4, total)  # a folded tail makes the last chunk larger
     needed = estimate_chunk_bytes(bw, bh, sp.engine_scale, chunk)
     free = shutil.disk_usage(work).free
     if free < needed:
@@ -143,15 +167,14 @@ def _run_upscale(spec: RenderSpec, tools: ToolSet, info: MediaInfo, plan: Render
                         f"{free / 1e9:.1f} GB free on {work.anchor or work}.")
     _prepare_work_dir(work, _signature(spec, plan))
 
-    n_chunks = -(-total // spec.segment_frames)
+    ranges = chunk_ranges(total, spec.segment_frames, plan)
+    n_chunks = len(ranges)
     segments: list[Path] = []
     done = 0
     started = time.monotonic()
-    for i in range(n_chunks):
+    for i, (start, count) in enumerate(ranges):
         if cancel.is_set():
             raise Cancelled()
-        start = i * spec.segment_frames
-        count = min(spec.segment_frames, total - start)
         seg = work / f"seg_{i:05d}.mp4"
         segments.append(seg)
         label = f"Chunk {i + 1}/{n_chunks}"
@@ -164,12 +187,14 @@ def _run_upscale(spec: RenderSpec, tools: ToolSet, info: MediaInfo, plan: Render
             shutil.rmtree(d, ignore_errors=True)
         emit(Progress("Extracting", done, total, label))
         got = ffmpeg_ops.extract_frames(tools.ffmpeg, spec.input, in_dir, plan, start, count, cancel)
+        _check(cancel)  # fast steps can finish between the runner's cancel checks
         if got == 0:
             raise ToolError("ffmpeg could not read frames from this part of the video; the file may be damaged")
         base = done
         upscaler.upscale_dir(exe, in_dir, out_dir, model=plan.model, scale=sp.engine_scale,
                              expected=got, tile=spec.tile, cancel=cancel,
                              on_frames=lambda n, b=base, lb=label: emit(Progress("Upscaling", b + n, total, lb)))
+        _check(cancel)
         emit(Progress("Encoding", done + got, total, label))
         ffmpeg_ops.encode_chunk(tools.ffmpeg, out_dir, seg, plan, start, got,
                                 encoder=spec.encoder, quality=spec.quality, cancel=cancel)
@@ -178,6 +203,7 @@ def _run_upscale(spec: RenderSpec, tools: ToolSet, info: MediaInfo, plan: Render
         done += got
         log.info("%s done (%.2f fps overall)", label, done / max(1e-6, time.monotonic() - started))
 
+    _check(cancel)
     emit(Progress("Finishing", total, total, "Joining chunks and adding audio"))
     ffmpeg_ops.join_segments(tools.ffmpeg, segments, spec.input, spec.output, plan, with_audio=info.has_audio,
                              max_seconds=spec.max_seconds, work_dir=work, cancel=cancel)

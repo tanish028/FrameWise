@@ -60,6 +60,22 @@ def test_missing_program_raises_tool_error():
         run_cancellable(["definitely-not-a-real-program-xyz"])
 
 
+def test_stall_watchdog_stops_a_hung_tool():
+    import time
+    t = time.monotonic()
+    with pytest.raises(ToolError, match="stopped making progress"):
+        run_cancellable([sys.executable, "-c", "import time; time.sleep(30)"], tick=0.05,
+                        progress=lambda: "stuck", stall_timeout=0.3)
+    assert time.monotonic() - t < 5
+
+
+def test_stall_watchdog_leaves_progressing_tools_alone():
+    counter = iter(range(10**6))
+    out = run_cancellable([sys.executable, "-c", "import time; time.sleep(0.6); print('ok')"], tick=0.05,
+                          progress=lambda: next(counter), stall_timeout=0.2)
+    assert "ok" in out
+
+
 def test_cancel_kills_child():
     ev = threading.Event()
     threading.Timer(0.3, ev.set).start()

@@ -242,3 +242,16 @@ def test_spaces_quotes_unicode_and_multiple_dots_in_paths(get_tools, tmp_path, a
     assert int(streams["video"]["nb_read_frames"]) == build_plan(s.edit, probe(toolset.ffprobe, src)).out_frames
     assert "audio" in streams
     assert not work_dir_for(s).exists() and not any(out.parent.glob("*.part*"))
+
+
+@pytest.mark.parametrize("rate", [1.0, 2.0])
+def test_tiny_final_chunk_does_not_add_frames(toolset, tmp_path, rate):
+    """50 frames in 16-frame chunks used to end with a 2-frame chunk, which ffmpeg 8 joined 2 frames too long."""
+    src = make_index_video(tmp_path / "idx.mp4", rate="30000/1001", frames=50)
+    s = spec(src, tmp_path / "o.mp4", ai=True, seg=16, speed=Speed(rate=rate).validated())
+    out = run_render(s, toolset)
+    plan = build_plan(s.edit, probe(toolset.ffprobe, src))
+    streams = probe_streams(out)
+    assert int(streams["video"]["nb_read_frames"]) == plan.out_frames
+    assert len(frame_indices(out)) == plan.out_frames, "no duplicated frames when read at constant frame rate"
+    assert float(streams["video"]["duration"]) == pytest.approx(plan.out_duration, abs=0.001)

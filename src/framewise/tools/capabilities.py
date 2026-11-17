@@ -55,7 +55,7 @@ class FeatureStatus:
 # Only features that are implemented are listed; later steps add theirs.
 FEATURES: dict[str, Feature] = {f.key: f for f in (
     Feature("encode", "Basic video export", (("scale",), ("format",))),
-    Feature("trim", "Trim", (("setpts",), ("asetpts",), ("apad",), ("atrim",))),
+    Feature("trim", "Trim", (("setpts",), ("asetpts",), ("apad",), ("atrim",))),  # apad: pre-pad before cut
     Feature("orient", "Rotate and flip", (("transpose",), ("hflip",), ("vflip",))),
     Feature("crop", "Crop", (("crop",),)),
     Feature("speed", "Speed change (audio pitch kept)",
