@@ -24,3 +24,4 @@ where = ["src"]
 testpaths = ["tests"]
 qt_api = "pyside6"
 markers = ["ffmpeg: needs ffmpeg/ffprobe on PATH"]
+faulthandler_timeout = 240  # a hung test dumps every thread's stack instead of stalling CI silently

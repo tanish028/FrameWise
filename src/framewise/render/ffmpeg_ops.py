@@ -1,7 +1,8 @@
 """ffmpeg commands used by the render pipeline.
 
 Every command is built by a pure `*_args` function (tested directly, including exact parity with
-Phase 1 for default edits) and executed by a thin wrapper. Commands are always argument lists,
+Phase 1 for default edits) and executed by a thin wrapper. Numbers are converted with float() before
+formatting: Fraction only accepts format specs from Python 3.12. Commands are always argument lists,
 never shell strings. File paths are only ever separate arguments or concat-list entries,
 never embedded inside filter expressions.
 """
@@ -49,8 +50,8 @@ def video_window_args(plan: RenderPlan) -> list[str]:
     can never drop or add a frame)."""
     w = plan.window
     if w.start_frame > 0:
-        return ["-ss", f"{(w.start_frame - 0.5) / w.fps:.6f}", "-t", f"{w.frames / w.fps:.6f}"]
-    return ["-t", f"{(w.frames - 0.5) / w.fps:.6f}"]
+        return ["-ss", f"{float((w.start_frame - 0.5) / w.fps):.6f}", "-t", f"{float(w.frames / w.fps):.6f}"]
+    return ["-t", f"{float((w.frames - 0.5) / w.fps):.6f}"]
 
 
 def audio_window_args(plan: RenderPlan) -> list[str]:
@@ -135,7 +136,7 @@ def extract_args(ffmpeg: Path, src: Path, dest: Path, plan: RenderPlan, chunk_st
     frame = plan.window.start_frame + chunk_start
     cmd: Cmd = [ffmpeg, "-v", "error", "-y"]
     if frame > 0:
-        cmd += ["-ss", f"{(frame - 0.5) / plan.window.fps:.6f}"]
+        cmd += ["-ss", f"{float((frame - 0.5) / plan.window.fps):.6f}"]
     cmd += ["-i", src, "-map", "0:v:0", "-an", "-sn", "-dn"]
     cmd += _vf(plan.video_filters(before_ai=True, timestamp_reset=False))
     cmd += ["-frames:v", str(count), "-fps_mode", "passthrough", "-start_number", "1", dest / "%08d.png"]
