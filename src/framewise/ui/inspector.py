@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, Q
                                QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout, QWidget)
 
 from ..media.probe import format_duration, format_size
-from ..project.model import QUALITY_RANGE, MediaItem
+from ..project.edit import QUALITY_RANGE
+from ..project.model import MediaItem
 from ..render.presets import PRESETS, get_preset
 from ..render.scaling import TARGET_CHOICES, plan_scaling
 from ..tools.encoders import ENCODERS
@@ -25,7 +26,7 @@ def quality_note(q: int) -> str:
 
 
 class Inspector(QWidget):
-    changed = Signal(str, dict)          # item id, {field: value}
+    changed = Signal(str, str, dict)     # item id, edit section, {field: value}
     preview_requested = Signal(str)
     queue_requested = Signal(str)
 
@@ -109,13 +110,15 @@ class Inspector(QWidget):
         lay.addStretch()
         lay.addLayout(brow)
 
-        self.chk_upscale.toggled.connect(lambda v: self._emit(upscale=v))
-        self.cmb_preset.currentIndexChanged.connect(lambda _i: self._emit(preset=self.cmb_preset.currentData()))
-        self.cmb_target.currentTextChanged.connect(lambda t: self._emit(target=t))
-        self.cmb_encoder.currentIndexChanged.connect(lambda _i: self._emit(encoder=self.cmb_encoder.currentData()))
+        self.chk_upscale.toggled.connect(lambda v: self._emit("enhance", upscale=v))
+        self.cmb_preset.currentIndexChanged.connect(
+            lambda _i: self._emit("enhance", preset=self.cmb_preset.currentData()))
+        self.cmb_target.currentTextChanged.connect(lambda t: self._emit("enhance", target=t))
+        self.cmb_encoder.currentIndexChanged.connect(
+            lambda _i: self._emit("export", video_codec=self.cmb_encoder.currentData()))
         self.sld_quality.valueChanged.connect(self._quality_moved)
-        self.sld_quality.sliderReleased.connect(lambda: self._emit(quality=self.sld_quality.value()))
-        self.txt_output.editingFinished.connect(lambda: self._emit(output=self.txt_output.text().strip()))
+        self.sld_quality.sliderReleased.connect(lambda: self._emit("export", quality=self.sld_quality.value()))
+        self.txt_output.editingFinished.connect(lambda: self._emit("export", output=self.txt_output.text().strip()))
         self.set_item(None)
 
     # -- public ---------------------------------------------------------------
@@ -135,7 +138,7 @@ class Inspector(QWidget):
                 self.facts.setText("Select one video in the media list to edit its settings.")
                 self.warning.clear()
                 return
-            s = item.settings
+            up, ex = item.edit.enhance, item.edit.export
             self.title.setText(item.name)
             if item.info:
                 i = item.info
@@ -144,53 +147,53 @@ class Inspector(QWidget):
                                    f"{i.video_codec} / {audio} · {format_size(i.size_bytes)}")
             else:
                 self.facts.setText("Reading file information…" if item.exists() else "File missing")
-            self.chk_upscale.setChecked(s.upscale)
-            self.cmb_preset.setCurrentIndex(max(0, self.cmb_preset.findData(s.preset)))
-            self.cmb_target.setCurrentText(s.target)
+            self.chk_upscale.setChecked(up.upscale)
+            self.cmb_preset.setCurrentIndex(max(0, self.cmb_preset.findData(up.preset)))
+            self.cmb_target.setCurrentText(up.target)
             self.cmb_encoder.clear()
-            keys = list(self._encoders) + ([s.encoder] if s.encoder not in self._encoders else [])
+            keys = list(self._encoders) + ([ex.video_codec] if ex.video_codec not in self._encoders else [])
             for k in keys:
                 label = ENCODERS[k].label + ("" if k in self._encoders else " (not available)")
                 self.cmb_encoder.addItem(label, k)
-            self.cmb_encoder.setCurrentIndex(max(0, self.cmb_encoder.findData(s.encoder)))
-            self.sld_quality.setValue(s.quality)
-            self.txt_output.setText(s.output)
+            self.cmb_encoder.setCurrentIndex(max(0, self.cmb_encoder.findData(ex.video_codec)))
+            self.sld_quality.setValue(ex.quality)
+            self.txt_output.setText(ex.output)
             for w in (self.cmb_preset, self.cmb_target):
-                w.setEnabled(s.upscale)
+                w.setEnabled(up.upscale)
             self._refresh_derived()
         finally:
             self._loading = False
 
     # -- internals -------------------------------------------------------------
-    def _emit(self, **changes) -> None:
+    def _emit(self, section: str, **changes) -> None:
         if not self._loading and self._item is not None:
-            self.changed.emit(self._item.id, changes)
+            self.changed.emit(self._item.id, section, changes)
 
     def _quality_moved(self, v: int) -> None:
         self.lbl_quality.setText(f"{v} · {quality_note(v)}")
         if not self.sld_quality.isSliderDown():  # keyboard / click: commit immediately
-            self._emit(quality=v)
+            self._emit("export", quality=v)
 
     def _refresh_derived(self) -> None:
         item = self._item
         if item is None:
             return
-        s = item.settings
-        self.lbl_preset.setText(get_preset(s.preset).description)
-        self.lbl_quality.setText(f"{s.quality} · {quality_note(s.quality)}")
+        up, ex = item.edit.enhance, item.edit.export
+        self.lbl_preset.setText(get_preset(up.preset).description)
+        self.lbl_quality.setText(f"{ex.quality} · {quality_note(ex.quality)}")
         problems = []
         if not item.exists():
             problems.append("The source file is missing. Re-import it.")
-        if s.upscale and item.info:
+        if up.upscale and item.info:
             try:
-                plan = plan_scaling(item.info.width, item.info.height, s.target, get_preset(s.preset).native_scales)
+                plan = plan_scaling(item.info.width, item.info.height, up.target, get_preset(up.preset).native_scales)
                 self.lbl_size.setText(f"{plan.out_width}×{plan.out_height}")
             except ValueError as e:
                 self.lbl_size.setText("—")
                 problems.append(str(e))
         else:
             self.lbl_size.setText(item.info.resolution if item.info else "—")
-        if s.encoder not in self._encoders:
+        if ex.video_codec not in self._encoders:
             problems.append("The chosen encoder isn't available on this computer.")
         self.warning.setText("\n".join(problems))
         self.btn_queue.setEnabled(not problems)
@@ -205,4 +208,4 @@ class Inspector(QWidget):
             if not path.lower().endswith(".mp4"):
                 path += ".mp4"
             self.txt_output.setText(path)
-            self._emit(output=path)
+            self._emit("export", output=path)

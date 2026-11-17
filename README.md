@@ -19,7 +19,8 @@ on any NVIDIA, AMD or Intel GPU.
   compare settings before committing to a long render.
 - **Crash-safe AI renders:** video is processed in chunks, so disk use stays small and a cancelled or crashed render
   resumes from the last finished chunk.
-- **Projects:** save and reopen your work (`.fwproj`), with undo and redo for every edit.
+- **Projects:** save and reopen your work (`.fwproj`), with undo and redo for every edit. Projects from older
+  versions of FrameWise are upgraded automatically when opened, and the original file is only changed when you save.
 - **Hardware encoders:** NVIDIA NVENC, AMD AMF and Intel QSV are detected automatically and only shown when they work.
 - **First-run setup** downloads ffmpeg and the AI engine for you. Original audio is always kept.
 

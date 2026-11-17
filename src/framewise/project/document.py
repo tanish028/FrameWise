@@ -7,10 +7,11 @@ from typing import Callable
 
 from ..media.probe import MediaInfo
 from .io import load_project, save_project
-from .model import ClipSettings, MediaItem, Project
+from .edit import Edit
+from .model import MediaItem, Project
 from .undo import UndoStack
 
-# Events: ("reset", None) | ("added", id) | ("removed", id) | ("settings", id) | ("info", id) | ("state", None)
+# Events: ("reset", None) | ("added", id) | ("removed", id) | ("edit", id) | ("info", id) | ("state", None)
 Listener = Callable[[str, object], None]
 
 
@@ -52,18 +53,18 @@ class _RemoveItems:
 
 
 @dataclass
-class _ChangeSettings:
+class _ChangeEdit:
     doc: "ProjectDocument"
     item_id: str
-    old: ClipSettings
-    new: ClipSettings
-    text: str = "Change settings"
+    old: Edit
+    new: Edit
+    text: str = "Change edit"
 
-    def _apply(self, s: ClipSettings) -> None:
+    def _apply(self, e: Edit) -> None:
         item = self.doc.project.find(self.item_id)
         if item is not None:
-            item.settings = s
-            self.doc._emit("settings", self.item_id)
+            item.edit = e
+            self.doc._emit("edit", self.item_id)
 
     def do(self) -> None:
         self._apply(self.new)
@@ -118,14 +119,14 @@ class ProjectDocument:
         self.undo.set_clean()
 
     # -- edits (undoable) -------------------------------------------------
-    def add_media(self, paths: list[str], defaults: ClipSettings | None = None) -> list[MediaItem]:
+    def add_media(self, paths: list[str], defaults: Edit | None = None) -> list[MediaItem]:
         existing = {str(Path(i.path).resolve()) for i in self.project.items}
         new_items = []
         for p in paths:
             key = str(Path(p).resolve())
             if key not in existing:
                 existing.add(key)
-                new_items.append(MediaItem(path=str(Path(p)), settings=defaults or ClipSettings()))
+                new_items.append(MediaItem(path=str(Path(p)), edit=defaults or Edit()))
         if new_items:
             self.undo.push(_AddItems(self, new_items,
                                      "Import media" if len(new_items) > 1 else f"Import {new_items[0].name}"))
@@ -136,13 +137,25 @@ class ProjectDocument:
         if ids:
             self.undo.push(_RemoveItems(self, ids))
 
-    def update_settings(self, item_id: str, **changes) -> None:
+    def update_edit(self, item_id: str, section: str, text: str | None = None, **changes) -> None:
+        """Change fields of one edit section as a single undoable step (no-op changes are not recorded)."""
         item = self.project.find(item_id)
         if item is None:
             return
-        new = item.settings.with_changes(**changes)
-        if new != item.settings:
-            self.undo.push(_ChangeSettings(self, item_id, item.settings, new))
+        self.set_edit(item_id, item.edit.with_section(section, **changes), text or f"Change {section}")
+
+    def reset_section(self, item_id: str, section: str) -> None:
+        item = self.project.find(item_id)
+        if item is not None:
+            self.set_edit(item_id, item.edit.reset_section(section), f"Reset {section}")
+
+    def set_edit(self, item_id: str, edit: Edit, text: str = "Change edit") -> None:
+        item = self.project.find(item_id)
+        if item is None:
+            return
+        new = edit.validated()
+        if new != item.edit:
+            self.undo.push(_ChangeEdit(self, item_id, item.edit, new, text))
 
     # -- not undoable: cached facts about files ----------------------------
     def set_info(self, item_id: str, info: MediaInfo) -> None:

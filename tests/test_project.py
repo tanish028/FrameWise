@@ -5,7 +5,8 @@ import pytest
 from framewise.core.errors import ProjectError
 from framewise.project.document import ProjectDocument
 from framewise.project.io import load_project, save_project
-from framewise.project.model import ClipSettings, MediaItem, Project
+from framewise.project.edit import Edit, Enhance, Export
+from framewise.project.model import MediaItem, Project
 from framewise.project.undo import UndoStack
 
 
@@ -50,21 +51,22 @@ def test_undo_limit_drops_oldest():
 
 
 def test_settings_validation_repairs_bad_values():
-    s = ClipSettings.from_dict({"preset": "bogus", "target": "9x", "encoder": "nope", "quality": 99, "extra": 1})
-    assert (s.preset, s.target, s.encoder, s.quality) == ("general", "2x", "libx264", 35)
+    e = Edit.from_dict({"enhance": {"preset": "bogus", "target": "9x", "extra": 1},
+                        "export": {"video_codec": "nope", "quality": 99}})
+    assert (e.enhance.preset, e.enhance.target, e.export.video_codec, e.export.quality) == ("general", "2x", "libx264", 35)
 
 
 def test_project_save_load_roundtrip_with_relative_paths(tmp_path):
     media = tmp_path / "videos" / "a.mp4"
     media.parent.mkdir()
     media.write_bytes(b"x")
-    proj = Project([MediaItem(str(media), ClipSettings(preset="anime", quality=20))])
+    proj = Project([MediaItem(str(media), Edit(enhance=Enhance(preset="anime"), export=Export(quality=20)))])
     path = tmp_path / "p.fwproj"
     save_project(proj, path)
     raw = json.loads(path.read_text())
     assert raw["items"][0]["path"] == "videos/a.mp4"
     loaded = load_project(path)
-    assert loaded.items[0].settings == proj.items[0].settings
+    assert loaded.items[0].edit == proj.items[0].edit
     assert loaded.items[0].id == proj.items[0].id
     assert loaded.items[0].exists()
 
@@ -84,17 +86,17 @@ def test_document_edits_are_undoable_and_emit_events(tmp_path):
     items = doc.add_media([str(a), str(b), str(a)])
     assert len(items) == 2 and doc.dirty
     assert doc.add_media([str(a)]) == []  # duplicates ignored
-    doc.update_settings(items[0].id, quality=25)
-    doc.update_settings(items[0].id, quality=25)  # no-op change is not recorded
+    doc.update_edit(items[0].id, "export", quality=25)
+    doc.update_edit(items[0].id, "export", quality=25)  # no-op change is not recorded
     doc.remove_media([items[1].id])
     assert [i.name for i in doc.project.items] == ["a.mp4"]
     doc.undo.undo()
     assert [i.name for i in doc.project.items] == ["a.mp4", "b.mp4"]
     doc.undo.undo()
-    assert doc.project.items[0].settings.quality == 18
+    assert doc.project.items[0].edit.export.quality == 18
     doc.undo.undo()
     assert doc.project.items == [] and not doc.dirty
-    assert {"added", "removed", "settings", "state"} <= set(events)
+    assert {"added", "removed", "edit", "state"} <= set(events)
 
 
 def test_document_save_open_new(tmp_path):

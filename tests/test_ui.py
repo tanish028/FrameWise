@@ -43,10 +43,10 @@ def test_import_edit_undo_save_reopen(window, qtbot, sample_video, tmp_path):
     assert window.inspector.lbl_size.text() == "128×96"
 
     window.inspector.cmb_target.setCurrentText("4x")
-    assert item.settings.target == "4x" and window.inspector.lbl_size.text() == "256×192"
+    assert item.edit.enhance.target == "4x" and window.inspector.lbl_size.text() == "256×192"
     assert window.windowTitle().startswith("Untitled*")
     window.act_undo.trigger()
-    assert item.settings.target == "2x" and window.inspector.cmb_target.currentText() == "2x"
+    assert item.edit.enhance.target == "2x" and window.inspector.cmb_target.currentText() == "2x"
     window.act_redo.trigger()
 
     proj = tmp_path / "p.fwproj"
@@ -55,7 +55,7 @@ def test_import_edit_undo_save_reopen(window, qtbot, sample_video, tmp_path):
     window.doc.new()
     assert window.media.list.count() == 0
     assert window.open_project(proj, confirmed=True)
-    assert window.doc.project.items[0].settings.target == "4x"
+    assert window.doc.project.items[0].edit.enhance.target == "4x"
     assert window.media.list.count() == 1
 
 
@@ -64,7 +64,7 @@ def test_render_and_preview_through_queue(window, qtbot, sample_video):
     window.add_files([str(sample_video)])
     item = window.doc.project.items[0]
     qtbot.waitUntil(lambda: item.info is not None, timeout=10000)
-    window.doc.update_settings(item.id, preset="anime")
+    window.doc.update_edit(item.id, "enhance", preset="anime")
 
     preview = window.enqueue([item.id], preview=True)[0]
     full = window.enqueue([item.id])[0]
@@ -97,10 +97,10 @@ def test_inspector_quality_slider_commits_once_on_release(qtbot):
     qtbot.addWidget(insp)
     insp.set_item(MediaItem("/nonexistent.mp4"))
     seen = []
-    insp.changed.connect(lambda i, ch: seen.append(ch))
+    insp.changed.connect(lambda i, section, ch: seen.append((section, ch)))
     insp.sld_quality.setSliderDown(True)
     for v in (20, 21, 22):
         insp.sld_quality.setValue(v)
     assert seen == []
     insp.sld_quality.setSliderDown(False)  # emits sliderReleased
-    assert seen == [{"quality": 22}]
+    assert seen == [("export", {"quality": 22})]

@@ -107,8 +107,8 @@ class MediaPanel(QWidget):
         else:
             i = item.info
             detail = f"{i.resolution} · {format_duration(i.duration)} · {i.fps:.3g} fps"
-        s = item.settings
-        plan = f"AI upscale {s.target}" if s.upscale else "Export only"
+        up = item.edit.enhance
+        plan = f"AI upscale {up.target}" if up.upscale else "Export only"
         w.setText(f"{item.name}\n{detail}\n{plan}")
         w.setToolTip(f"{item.path}\n{detail}\n{plan}")
 

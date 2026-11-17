@@ -1,4 +1,4 @@
-"""Save and load `.fwproj` files (versioned JSON, written atomically)."""
+"""Save and load `.fwproj` files (versioned JSON, written atomically, older versions migrated)."""
 from __future__ import annotations
 
 import json
@@ -7,10 +7,11 @@ from pathlib import Path
 
 from .. import __version__
 from ..core.errors import ProjectError
+from .migrations import migrate
 from .model import Project
 
 FORMAT = "framewise-project"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 EXTENSION = ".fwproj"
 
 
@@ -21,7 +22,7 @@ def save_project(project: Project, path: Path) -> None:
     tmp = path.with_name(path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, path)
     except OSError as e:
         tmp.unlink(missing_ok=True)
@@ -39,9 +40,12 @@ def load_project(path: Path) -> Project:
     if not isinstance(data, dict) or data.get("format") != FORMAT:
         raise ProjectError("This file is not a FrameWise project")
     version = data.get("version")
-    if not isinstance(version, int) or version > FORMAT_VERSION:
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise ProjectError("The project file has no valid version number")
+    if version > FORMAT_VERSION:
         raise ProjectError("This project was made with a newer FrameWise. Please update the app.")
     try:
+        data = migrate(data, FORMAT_VERSION)
         return Project.from_dict(data, base_dir=path.parent)
-    except (KeyError, TypeError, ValueError) as e:
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
         raise ProjectError(f"The project file is damaged ({e})") from e

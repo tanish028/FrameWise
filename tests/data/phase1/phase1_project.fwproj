@@ -1,0 +1,33 @@
+{
+  "format": "framewise-project",
+  "version": 1,
+  "app_version": "0.1.0",
+  "items": [
+    {
+      "id": "9b68649cfd3d4a46824ba73856203373",
+      "path": "media/family trip.final.v2.mp4",
+      "settings": {
+        "upscale": true,
+        "preset": "anime",
+        "target": "1080p",
+        "encoder": "libx265",
+        "quality": 22,
+        "output": ""
+      },
+      "info": null
+    },
+    {
+      "id": "ef1c5f89a6674bad8e6030b704e6a4d9",
+      "path": "media/screen rec.mp4",
+      "settings": {
+        "upscale": false,
+        "preset": "general",
+        "target": "2x",
+        "encoder": "libx264",
+        "quality": 18,
+        "output": "D:\\Videos\\out\\custom name.mp4"
+      },
+      "info": null
+    }
+  ]
+}

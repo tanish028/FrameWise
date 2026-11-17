@@ -37,17 +37,17 @@ def unique_path(p: Path) -> Path:
 
 def spec_from_item(item: MediaItem, *, preview: bool = False, output_dir: Path | None = None,
                    preview_seconds: float = 3.0) -> RenderSpec:
-    s = item.settings
+    up, ex = item.edit.enhance, item.edit.export
     src = Path(item.path)
-    suffix = (s.target if s.upscale else "export") + ("_preview" if preview else "")
-    if s.output and not preview:
-        out = Path(s.output)
-    elif s.output and preview:
-        out = Path(s.output).with_name(Path(s.output).stem + "_preview.mp4")
+    suffix = (up.target if up.upscale else "export") + ("_preview" if preview else "")
+    if ex.output and not preview:
+        out = Path(ex.output)
+    elif ex.output and preview:
+        out = Path(ex.output).with_name(Path(ex.output).stem + "_preview.mp4")
     else:
         out = auto_output_path(src, suffix, output_dir)
         if not preview:
             out = unique_path(out)
-    return RenderSpec(input=src, output=out, upscale=s.upscale, preset=s.preset, target=s.target,
-                      encoder=s.encoder, quality=s.quality,
+    return RenderSpec(input=src, output=out, upscale=up.upscale, preset=up.preset, target=up.target,
+                      encoder=ex.video_codec, quality=ex.quality,
                       max_seconds=preview_seconds if preview else None)

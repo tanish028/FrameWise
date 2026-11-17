@@ -16,7 +16,8 @@ from ..media.probe import VIDEO_EXTENSIONS, probe
 from ..media.thumbnails import make_thumbnail
 from ..project.document import ProjectDocument
 from ..project.io import EXTENSION
-from ..project.model import ClipSettings, MediaItem
+from ..project.edit import Edit, Export
+from ..project.model import MediaItem
 from ..render.queue import Job, JobStatus, RenderQueue
 from ..render.spec import spec_from_item
 from ..tools import registry
@@ -71,7 +72,7 @@ class MainWindow(QMainWindow):
         self.media.selection_changed.connect(self._on_selection)
         self.media.import_requested.connect(self.import_media)
         self.media.remove_requested.connect(self.doc.remove_media)
-        self.inspector.changed.connect(lambda item_id, ch: self.doc.update_settings(item_id, **ch))
+        self.inspector.changed.connect(lambda item_id, sec, ch: self.doc.update_edit(item_id, sec, **ch))
         self.inspector.preview_requested.connect(lambda i: self.enqueue([i], preview=True))
         self.inspector.queue_requested.connect(lambda i: self.enqueue([i]))
         self.queue_panel.job_finished.connect(self._on_job_finished)
@@ -174,7 +175,7 @@ class MainWindow(QMainWindow):
             self._load_media_facts(item)
         elif event == "removed":
             self.media.remove_item(payload)
-        elif event in ("settings", "info"):
+        elif event in ("edit", "info"):
             item = self.doc.project.find(payload)
             self.media.refresh_item(item)
             if self.media.current_id() == payload:
@@ -227,12 +228,12 @@ class MainWindow(QMainWindow):
             self.settings.last_open_dir = str(Path(files[0]).parent)
             self.add_files(files)
 
-    def default_clip_settings(self) -> ClipSettings:
+    def default_edit(self) -> Edit:
         enc = self.settings.default_encoder if self.settings.default_encoder in self.encoders else self.encoders[0]
-        return ClipSettings(encoder=enc, quality=self.settings.default_quality)
+        return Edit(export=Export(video_codec=enc, quality=self.settings.default_quality)).validated()
 
     def add_files(self, files: list[str]) -> None:
-        added = self.doc.add_media(files, self.default_clip_settings())
+        added = self.doc.add_media(files, self.default_edit())
         if added:
             self.media.select(added[0].id)
             self.statusBar().showMessage(f"Imported {len(added)} video(s)", 4000)

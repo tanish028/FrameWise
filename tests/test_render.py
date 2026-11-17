@@ -6,7 +6,8 @@ import pytest
 from framewise.core.errors import Cancelled, ToolError
 from framewise.media.probe import probe
 from framewise.media.thumbnails import make_thumbnail
-from framewise.project.model import ClipSettings, MediaItem
+from framewise.project.edit import Edit, Enhance
+from framewise.project.model import MediaItem
 from framewise.render.pipeline import Progress, run_render, work_dir_for
 from framewise.render.queue import JobStatus, RenderQueue
 from framewise.render.spec import RenderSpec, spec_from_item
@@ -26,13 +27,13 @@ def _spec(src, out, **kw):
 def test_spec_from_item_names_and_preview(tmp_path):
     src = tmp_path / "v.mp4"
     src.write_bytes(b"x")
-    item = MediaItem(str(src), ClipSettings(target="1080p"))
+    item = MediaItem(str(src), Edit(enhance=Enhance(target="1080p")))
     assert spec_from_item(item).output.name == "v_1080p.mp4"
     (tmp_path / "v_1080p.mp4").write_bytes(b"x")
     assert spec_from_item(item).output.name == "v_1080p (2).mp4"  # never overwrite silently
     prev = spec_from_item(item, preview=True)
     assert prev.output.name == "v_1080p_preview.mp4" and prev.max_seconds == 3.0
-    item.settings = ClipSettings(upscale=False)
+    item.edit = Edit(enhance=Enhance(upscale=False))
     assert spec_from_item(item, output_dir=tmp_path / "out").output == tmp_path / "out" / "v_export.mp4"
 
 
