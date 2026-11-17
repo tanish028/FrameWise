@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "framewise"
-version = "0.1.0"
-description = "Desktop video editor with local, GPU-accelerated AI tools (upscaling and more)"
+version = "0.2.0"
+description = "Image and video editor with local, GPU-accelerated AI tools"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Tanish Anand" }]

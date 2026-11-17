@@ -1,91 +1,106 @@
 # FrameWise
 
-**Make old, low-resolution or shaky videos look good: on your own PC, with your own GPU, without uploading anything.**
+**Fix and polish photos and videos on your own PC: AI upscaling, colour, crop, trim, speed and export
+presets, with nothing uploaded anywhere.**
 
-Free video editors make you choose between simple trimming tools and AI enhancement, and AI enhancement usually means
-a cloud service with upload limits, subscriptions and privacy trade-offs, or command-line tools that need CUDA, PyTorch
-and a lot of patience. FrameWise puts AI enhancement and everyday editing in one desktop app that runs entirely locally
-on any NVIDIA, AMD or Intel GPU.
+Free editors make you choose between quick-and-simple tools and AI enhancement. AI enhancement usually
+means a cloud service with upload limits and subscriptions, or command-line tools that need CUDA, PyTorch
+and patience. FrameWise puts both in one desktop app that runs locally on any NVIDIA, AMD or Intel GPU,
+and every edit is non-destructive: your original files are never changed.
 
-![FrameWise main window](docs/screenshot.png)
+![FrameWise Video Studio](docs/screenshot.png)
 
-## What works today (v0.1, Phase 1)
+## What works today (v0.2, Phase 2)
 
-- **Media library:** import or drag in videos, with thumbnails, resolution, frame rate, duration and codecs.
-- **Built-in player:** play, scrub and step frame by frame.
-- **AI upscaling** with Real-ESRGAN, with presets for general footage, live action, anime (fast or quality) and game or
-  screen recordings. Targets: 2×, 3×, 4×, 1080p, 1440p or 4K. The app shows the exact output size before you render.
-- **Render queue:** runs in the background with progress, time left, cancel and retry. A 3-second preview button lets you
-  compare settings before committing to a long render.
-- **Crash-safe AI renders:** video is processed in chunks, so disk use stays small and a cancelled or crashed render
-  resumes from the last finished chunk.
-- **Projects:** save and reopen your work (`.fwproj`), with undo and redo for every edit. Projects from older
-  versions of FrameWise are upgraded automatically when opened, and the original file is only changed when you save.
-- **Hardware encoders:** NVIDIA NVENC, AMD AMF and Intel QSV are detected automatically and only shown when they work.
-- **First-run setup** downloads ffmpeg and the AI engine for you. Original audio is always kept.
-- **Feature check:** FrameWise asks your ffmpeg which filters it has and shows, under *Tools → Download / check
-  tools*, which editing features are available, unavailable or limited. A render never pretends a missing
-  filter worked; it stops with a plain explanation.
+**Two studios, one engine.** *Image Studio* and *Video Studio* share the same editing engine, so a
+crop, a colour grade or a look behaves identically on a photo and on a clip. Switch studios in the top
+bar; importing a file opens the right one.
 
-### Phase 2 in progress
-The render engine now supports frame-exact **trim**, **rotate/flip**, **crop** (applied before AI upscaling) and
-**speed changes** (0.25×–4×, audio pitch kept and in sync), identically in normal exports and chunked AI upscales.
-The editing controls for these arrive in the next steps.
+| | Image Studio | Video Studio |
+|---|---|---|
+| Media | PNG, JPEG, WebP, BMP, TIFF | MP4, MOV, MKV, WebM, AVI…, GIF, numbered image sequences, audio files |
+| Transform | rotate 90°/180°, flip, crop (freeform or 16:9, 9:16, 1:1, 4:3, 4:5, 21:9), resize with fit / fill / blur fill / stretch | same, plus black-bar detection (suggested, never applied without your OK) |
+| Colour | brightness, contrast, saturation, hue, gamma, exposure, temperature, tint, highlights, shadows, whites, blacks, vignette, fade | same |
+| Filters | Natural, Cinematic, Warm, Cool, Vintage, Black & White, Vibrant, 3 Color Boost, with a strength slider | same |
+| Enhance | sharpen, blur, denoise | sharpen, blur, denoise, deinterlace, two-pass stabilization |
+| AI | Real-ESRGAN upscaling 2×/3×/4× or to 1080p/1440p/4K | same, chunked and resumable |
+| Time | – | frame-exact trim, 0.25×–4× speed with pitch kept, reverse |
+| Audio | – | volume, mute, loudness normalization, fade in/out, export audio only (MP3, M4A, WAV, FLAC) |
+| Export | PNG, JPEG, WebP, BMP with quality and size | MP4/MOV (H.264/H.265, NVIDIA/AMD/Intel encoders), WebM (VP9/AV1), GIF; resolution, frame rate, constant quality, bitrate or approximate target size; presets for YouTube, Shorts, Reels, WhatsApp and Discord |
+
+**Preview you can trust.** Paused or scrubbed frames are rendered with exactly the same filters as the
+export, at full resolution and then scaled for display. Compare *Edited / Original / Split / Side by
+side*. Anything a still frame cannot show (speed, stabilization) is labelled instead of faked. Video
+playback shows the original, and the badge says so.
+
+**Built to be relied on.** Undo and redo for every edit (dragging a slider is one step), projects that
+open in later versions, a background render queue with progress, time left, cancel and resume, a check
+of which features your ffmpeg supports, and a stall watchdog that stops ffmpeg if it hangs.
 
 ## Roadmap
 
 | Phase | Scope |
 |---|---|
 | 1 ✅ | Foundation: library, player, projects, undo, render queue, AI upscaling |
-| 2 | Single-clip tools: trim, crop (manual and auto black bars), rotate, denoise, deinterlace, stabilize, colour, speed, audio, export presets, compress to a target size |
-| 3 | Timeline editor: multiple tracks, split and arrange clips, transitions, music track |
-| 4 | Text and subtitles: titles, watermark, SRT burn-in, auto-captions with Whisper |
-| 5 | AI tools: smart reframe (landscape to 9:16), RIFE frame interpolation, scene detection, silence removal |
-| 6 | Release: Windows installer, settings page, GPU auto-configuration |
+| 2 ✅ | Image Studio + Video Studio: shared editing engine, colour, looks, transform, trim, speed, audio, export studio, preview engine, Midnight Studio UI |
+| 3 | Multi-track timeline: arrange and split clips, transitions, music track |
+| 4 | Text and subtitles: titles, watermark, SRT burn-in, auto-captions (Whisper) |
+| 5 | More AI: smart reframe, frame interpolation (RIFE), scene detection, background removal |
+| 6 | Release: Windows installer, GPU auto-configuration |
 
-## Run it
+## Install and run
 
-**Windows:** install [Python 3.10+](https://www.python.org/downloads/) (tick *Add to PATH*), then double-click `run.bat`.
-The first launch creates a virtual environment and installs dependencies; after that it starts straight away.
+**Windows:** install [Python 3.10+](https://www.python.org/downloads/) (tick *Add python.exe to PATH*),
+clone or download this repository, and double-click `run.bat`. The first launch creates a private Python
+environment (about 1–2 minutes). FrameWise then offers to download its tools (about 100 MB):
 
-**Any OS:**
+* **ffmpeg** (BtbN GPL build): decoding, filters and encoding
+* **Real-ESRGAN ncnn-vulkan** (with its models): AI upscaling. It needs a GPU with Vulkan support; most
+  NVIDIA, AMD and Intel GPUs from the last decade qualify.
+
+Both are stored in `%LOCALAPPDATA%\FrameWise\tools`. *Tools → Download / check tools* shows what is
+installed and which editing features your ffmpeg supports.
+
+**Linux / macOS:**
 ```bash
-python -m venv .venv
-.venv/bin/pip install -e .          # Windows: .venv\Scripts\pip install -e .
-.venv/bin/python -m framewise       # Windows: .venv\Scripts\pythonw -m framewise
+python -m venv .venv && .venv/bin/pip install -e .
+.venv/bin/python -m framewise
 ```
-On Linux and macOS, install ffmpeg with your package manager. On Windows the app downloads it for you.
+Install ffmpeg with your package manager; FrameWise downloads Real-ESRGAN itself.
 
-Logs: `%LOCALAPPDATA%\FrameWise\logs` (Windows) or `~/.local/share/FrameWise/logs` (Linux), also reachable via *Tools → Open logs folder*.
+**Updating:** `git pull`, then start `run.bat` again. Projects from older versions are upgraded
+automatically when opened; the file only changes when you save.
+
+Logs: *Tools → Open logs folder* (`%LOCALAPPDATA%\FrameWise\logs`).
+
+## Known limitations
+* Video playback shows the original; edits appear on paused or scrubbed frames and in rendered
+  previews (*Preview 3 s*).
+* Stabilization and reverse cannot be combined with AI upscaling yet. FrameWise explains this and
+  suggests exporting in two steps.
+* Reverse holds the clip in memory. Long or very large clips are refused, with the maximum length shown.
+* Target-size exports are approximate (usually within a few percent with 2-pass x264/VP9, less exact
+  with GPU encoders).
+* Without ffmpeg's `rubberband` filter, slowed-down audio can run up to 0.1 s ahead of the picture
+  (shown as "limited" in the feature check).
+* Colour edits on images with transparency do not keep the alpha channel.
+* Background removal is not included yet (planned for Phase 5).
+* Image-sequence projects store the sequence's absolute folder path.
 
 ## Development
-
 ```bash
 pip install -e ".[dev]"
-pytest
+QT_QPA_PLATFORM=offscreen FRAMEWISE_NO_AUDIO=1 pytest
 ```
-Tests run without a GPU: a stand-in upscaler resizes frames with ffmpeg, so the full pipeline, the render queue and the
-UI (offscreen Qt) are exercised end to end. CI runs on Ubuntu and Windows for every push.
+Around 390 tests run without a GPU (a stand-in upscaler resizes frames with ffmpeg). Most check real
+ffmpeg output pixel by pixel: marker blocks for geometry, frames that encode their own index for trim
+and speed, timed tones for audio sync and pitch. CI runs on Ubuntu (ffmpeg 8) and Windows (ffmpeg 9)
+with Python 3.10 and 3.12.
 
-### Architecture
-
-```
-src/framewise/
-  core/      errors, paths, settings, logging, cancellable subprocesses       (no Qt)
-  media/     ffprobe → MediaInfo, thumbnails                                  (no Qt)
-  tools/     locate / download ffmpeg + AI engines, encoder detection         (no Qt)
-  project/   data model, .fwproj save/load, undo stack, ProjectDocument       (no Qt)
-  render/    filter graph builder, presets, scaling maths, RenderSpec, pipeline, queue   (no Qt)
-  ui/        PySide6 widgets: they show state and forward user intent, nothing else
-```
-Everything below `ui/` is plain Python and unit-tested on its own. Every project edit goes through `ProjectDocument` as
-an undoable command, and the UI updates from the document's events. New features plug in as render steps and inspector
-sections rather than special cases.
-
-`render/graph.py` turns a clip's edit into one `RenderPlan`: the filter chain, split at the AI-upscaling boundary,
-plus exact frame windows and audio filters. Both render paths and (from Step 3) the preview read the same plan, so
-they cannot drift apart. Tests check it pixel by pixel with real ffmpeg: a marker block for geometry, frames that
-encode their own index for trim and speed, and a timed tone for audio sync and pitch.
+Architecture: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Windows test checklist:
+[docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md).
 
 ## Credits
-[ffmpeg](https://ffmpeg.org) · [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (ncnn-vulkan build) · [Qt for Python](https://doc.qt.io/qtforpython/)
+[ffmpeg](https://ffmpeg.org) · [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (ncnn-vulkan build) ·
+[Qt for Python](https://doc.qt.io/qtforpython/) · [Lucide](https://lucide.dev) icons (ISC licence, see
+`src/framewise/ui/icons/LICENSE-lucide.txt`)

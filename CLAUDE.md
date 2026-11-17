@@ -6,6 +6,10 @@
   export) that each repair their own values in `validated()`. Defaults must be neutral (no visible change).
 - Changing the saved format: bump `FORMAT_VERSION` in `project/io.py` and add a step to `project/migrations.py`,
   with a fixture file in `tests/data/` written by the old version.
+- Architecture overview: docs/ARCHITECTURE.md. Images, videos, GIFs, sequences and audio share one engine:
+  media kind in `media/probe.py`, inputs via `media/source.Source.input_args()` (never `["-i", path]` by hand).
+- Operations live in `render/ops.py` as pure filter builders; `graph.py` places them; images use
+  `build_plan(still=True)`. Preview frames (`render/preview.py`) must use the same plan as exports.
 - All ffmpeg filters come from `render/graph.py:build_plan` (one RenderPlan for single-pass, chunked AI and
   preview). Add a feature as nodes at the right `Stage`; never build filter strings elsewhere. Pre-AI stages
   (< AI_BOUNDARY) run during frame extraction, post-AI stages when chunks are encoded.
@@ -18,4 +22,7 @@
 - User-facing failures raise `FrameWiseError` subclasses with plain-language messages.
 - Every new feature ships with tests. GPU work is tested with the fake upscaler in `tests/conftest.py`.
 - Run tests: `QT_QPA_PLATFORM=offscreen FRAMEWISE_NO_AUDIO=1 pytest -q`.
+- UI: tokens/stylesheet in `ui/theme.py`, icons via `ui/icons.icon(name)` (Lucide, bundled subset in
+  ui/icons/). Inspector emits `previewed` while dragging and `changed` once per gesture. Don't use
+  `setButtonSymbols(NoButtons)` on styled spin boxes (hides their text); the theme hides the arrows.
 - Roadmap phases are listed in README.md. Keep the README's "What works today" section accurate.
