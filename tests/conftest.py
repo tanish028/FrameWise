@@ -51,6 +51,21 @@ def sample_video(tmp_path):
 
 
 @pytest.fixture
+def ff_tools():
+    """ffmpeg/ffprobe without an AI upscaler: works on every OS, including Windows CI."""
+    if not (FFMPEG and FFPROBE):
+        pytest.skip("ffmpeg not on PATH")
+    from framewise.tools.registry import ToolSet
+    return ToolSet(Path(FFMPEG), Path(FFPROBE), None)
+
+
+@pytest.fixture
+def get_tools(request):
+    """get_tools(ai) → ff_tools, or the fake-upscaler toolset when the AI path is needed (POSIX only)."""
+    return lambda ai: request.getfixturevalue("toolset" if ai else "ff_tools")
+
+
+@pytest.fixture
 def toolset(tmp_path):
     if not (FFMPEG and FFPROBE):
         pytest.skip("ffmpeg not on PATH")

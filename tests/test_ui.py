@@ -104,3 +104,46 @@ def test_inspector_quality_slider_commits_once_on_release(qtbot):
     assert seen == []
     insp.sld_quality.setSliderDown(False)  # emits sliderReleased
     assert seen == [("export", {"quality": 22})]
+
+
+# --- Step 2: ffmpeg feature detection is visible to the user -------------------------------------
+@needs_ffmpeg
+def test_capabilities_detected_in_background(window, qtbot):
+    qtbot.waitUntil(lambda: window.capabilities is not None, timeout=10000)
+    assert window.capabilities.available("crop") and window.capabilities.available("orient")
+
+
+def test_setup_dialog_lists_feature_status(qtbot, tmp_path):
+    from framewise.tools.capabilities import FEATURES, Capabilities
+    from framewise.ui.setup_dialog import SetupDialog
+    every = {f for feat in FEATURES.values() for g in feat.needs for f in g} | {"rubberband", "scale", "format"}
+    caps = Capabilities(frozenset(every - {"transpose", "rubberband"}))
+    dlg = SetupDialog(tmp_path, None, caps)
+    qtbot.addWidget(dlg)
+    dlg._refresh_features(ffmpeg_missing=True)
+    assert "once ffmpeg is installed" in dlg.features.text()
+    dlg._refresh_features(ffmpeg_missing=False)
+    text = dlg.features.text()
+    assert "✖ Rotate and flip: unavailable, ffmpeg lacks transpose" in text
+    assert "◐ Speed change" in text and "0.1 s" in text
+    assert "✔ Crop" in text and "✔ Trim" in text
+
+
+@needs_ffmpeg
+def test_render_with_missing_filter_fails_with_plain_message(window, qtbot, sample_video, monkeypatch):
+    from framewise.tools.capabilities import Capabilities
+    real = Capabilities.detect(window.tools.ffmpeg)
+    monkeypatch.setattr(Capabilities, "detect", classmethod(lambda cls, ff: Capabilities(real.filters - {"transpose"})))
+    shown = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: shown.append(a[2]))
+    window.add_files([str(sample_video)])
+    item = window.doc.project.items[0]
+    window.doc.update_edit(item.id, "enhance", upscale=False)
+    window.doc.update_edit(item.id, "transform", rotate=90)
+    (job,) = window.enqueue([item.id])
+    qtbot.waitUntil(lambda: job.status.finished, timeout=20000)
+    assert job.status == JobStatus.FAILED
+    assert "transpose" in job.error and "Rotate and flip" in job.error
+    qtbot.waitUntil(lambda: bool(shown))
+    assert "Rotate and flip" in shown[0]
+    assert not job.spec.output.exists()

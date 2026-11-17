@@ -6,7 +6,7 @@ import pytest
 from framewise.core.errors import Cancelled, ToolError
 from framewise.media.probe import probe
 from framewise.media.thumbnails import make_thumbnail
-from framewise.project.edit import Edit, Enhance
+from framewise.project.edit import Edit, Enhance, Export
 from framewise.project.model import MediaItem
 from framewise.render.pipeline import Progress, run_render, work_dir_for
 from framewise.render.queue import JobStatus, RenderQueue
@@ -17,10 +17,12 @@ from .conftest import make_video, needs_ffmpeg
 
 
 def _spec(src, out, **kw):
-    base = dict(input=src, output=out, upscale=True, preset="anime", target="2x",
-                encoder="libx264", quality=20, segment_frames=8)
+    base = dict(upscale=True, preset="anime", target="2x", encoder="libx264", quality=20, segment_frames=8)
     base.update(kw)
-    return RenderSpec(**base)
+    # Built without validation on purpose: invalid values must reach the renderer and raise there.
+    edit = Edit(enhance=Enhance(upscale=base.pop("upscale"), preset=base.pop("preset"), target=base.pop("target")),
+                export=Export(video_codec=base.pop("encoder"), quality=base.pop("quality")))
+    return RenderSpec(input=src, output=out, edit=edit, **base)
 
 
 # --- spec ----------------------------------------------------------------

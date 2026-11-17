@@ -21,6 +21,7 @@ from ..project.model import MediaItem
 from ..render.queue import Job, JobStatus, RenderQueue
 from ..render.spec import spec_from_item
 from ..tools import registry
+from ..tools.capabilities import Capabilities
 from ..tools.encoders import detect_available
 from .inspector import Inspector
 from .media_panel import MediaPanel
@@ -42,6 +43,7 @@ class MainWindow(QMainWindow):
         self.tools_dir = tools_dir or paths.tools_dir()
         self.tools = registry.locate(self.tools_dir)
         self.encoders: list[str] = [self.settings.default_encoder]
+        self.capabilities: Capabilities | None = None
         self.doc = ProjectDocument()
         self.tasks = TaskRunner(self)
         self.queue = RenderQueue(lambda: registry.locate(self.tools_dir))
@@ -274,6 +276,7 @@ class MainWindow(QMainWindow):
 
     # -- tools ------------------------------------------------------------------
     def _detect_encoders(self) -> None:
+        """Probe ffmpeg in the background: usable encoders and supported filters."""
         tools = self.tools
         if tools is None:
             self.inspector.set_encoders(self.encoders)
@@ -284,14 +287,29 @@ class MainWindow(QMainWindow):
             self.inspector.set_encoders(keys)
             log.info("Usable encoders: %s", ", ".join(keys))
 
+        def caps_done(caps: Capabilities):
+            self.capabilities = caps
+            problems = caps.problems()
+            for p in problems:
+                log.warning("Feature status: %s", p.describe())
+            if problems:
+                names = ", ".join(p.feature.label for p in problems)
+                self.statusBar().showMessage(
+                    f"Some features are limited by your ffmpeg ({names}). See Tools → Download / check tools.", 15000)
+
+        def caps_failed(e):
+            log.warning("Could not detect ffmpeg filters: %s", e)
+            self.statusBar().showMessage(f"Could not check ffmpeg's features: {e}", 15000)
+
         self.tasks.run(lambda: detect_available(tools.ffmpeg), done)
+        self.tasks.run(lambda: Capabilities.detect(tools.ffmpeg), caps_done, caps_failed)
 
     def _check_tools(self) -> None:
         if registry.missing_components(self.tools_dir):
             self.show_setup()
 
     def show_setup(self) -> None:
-        SetupDialog(self.tools_dir, self).exec()
+        SetupDialog(self.tools_dir, self, self.capabilities).exec()
         had_ffmpeg = self.tools is not None
         self.tools = registry.locate(self.tools_dir)
         if self.tools is not None and not had_ffmpeg:

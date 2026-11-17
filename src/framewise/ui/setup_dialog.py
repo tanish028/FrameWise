@@ -4,11 +4,12 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout)
 
 from ..core.errors import Cancelled, FrameWiseError
 from ..tools import installer, registry
+from ..tools.capabilities import Capabilities
 
 
 class _Signals(QObject):
@@ -17,8 +18,9 @@ class _Signals(QObject):
 
 
 class SetupDialog(QDialog):
-    def __init__(self, tools_dir: Path, parent=None) -> None:
+    def __init__(self, tools_dir: Path, parent=None, capabilities: Capabilities | None = None) -> None:
         super().__init__(parent)
+        self.capabilities = capabilities
         self.setWindowTitle("FrameWise tools")
         self.setMinimumWidth(480)
         self.tools_dir = tools_dir
@@ -33,6 +35,11 @@ class SetupDialog(QDialog):
         intro.setWordWrap(True)
         self.status = QLabel()
         self.status.setWordWrap(True)
+        feat_title = QLabel("Video features")
+        feat_title.setObjectName("heading")
+        self.features = QLabel()
+        self.features.setWordWrap(True)
+        self.features.setTextInteractionFlags(self.features.textInteractionFlags() | Qt.TextSelectableByMouse)
         self.bar = QProgressBar()
         self.bar.setRange(0, 1000)
         self.bar.hide()
@@ -48,6 +55,9 @@ class SetupDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(intro)
         lay.addWidget(self.status)
+        lay.addSpacing(8)
+        lay.addWidget(feat_title)
+        lay.addWidget(self.features)
         lay.addWidget(self.bar)
         lay.addLayout(row)
         self._refresh()
@@ -66,9 +76,25 @@ class SetupDialog(QDialog):
             else:
                 lines.append(f"✖ {label}: install it with your system's package manager")
         self.status.setText("\n".join(lines))
+        self._refresh_features("ffmpeg" in missing)
         downloadable = [c for c in missing if installer.can_auto_install(c)]
         self.btn_download.setEnabled(bool(downloadable))
         self.btn_download.setText("Download" if downloadable else "All set")
+
+    def _refresh_features(self, ffmpeg_missing: bool) -> None:
+        if ffmpeg_missing:
+            self.features.setText("Available once ffmpeg is installed.")
+        elif self.capabilities is None:
+            self.features.setText("Checking what your ffmpeg supports…")
+        else:
+            lines = [st.describe() for st in self.capabilities.feature_status()]
+            self.features.setText("\n".join(lines))
+        self.features.adjustSize()
+        self.adjustSize()  # wrapped lines must never be clipped
+
+    def set_capabilities(self, caps: Capabilities | None) -> None:
+        self.capabilities = caps
+        self._refresh()
 
     def _start(self) -> None:
         todo = [c for c in self._missing() if installer.can_auto_install(c)]

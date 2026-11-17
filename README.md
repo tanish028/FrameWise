@@ -23,6 +23,14 @@ on any NVIDIA, AMD or Intel GPU.
   versions of FrameWise are upgraded automatically when opened, and the original file is only changed when you save.
 - **Hardware encoders:** NVIDIA NVENC, AMD AMF and Intel QSV are detected automatically and only shown when they work.
 - **First-run setup** downloads ffmpeg and the AI engine for you. Original audio is always kept.
+- **Feature check:** FrameWise asks your ffmpeg which filters it has and shows, under *Tools → Download / check
+  tools*, which editing features are available, unavailable or limited. A render never pretends a missing
+  filter worked; it stops with a plain explanation.
+
+### Phase 2 in progress
+The render engine now supports frame-exact **trim**, **rotate/flip**, **crop** (applied before AI upscaling) and
+**speed changes** (0.25×–4×, audio pitch kept and in sync), identically in normal exports and chunked AI upscales.
+The editing controls for these arrive in the next steps.
 
 ## Roadmap
 
@@ -67,12 +75,17 @@ src/framewise/
   media/     ffprobe → MediaInfo, thumbnails                                  (no Qt)
   tools/     locate / download ffmpeg + AI engines, encoder detection         (no Qt)
   project/   data model, .fwproj save/load, undo stack, ProjectDocument       (no Qt)
-  render/    presets, scaling maths, RenderSpec, pipeline, background queue   (no Qt)
+  render/    filter graph builder, presets, scaling maths, RenderSpec, pipeline, queue   (no Qt)
   ui/        PySide6 widgets: they show state and forward user intent, nothing else
 ```
 Everything below `ui/` is plain Python and unit-tested on its own. Every project edit goes through `ProjectDocument` as
 an undoable command, and the UI updates from the document's events. New features plug in as render steps and inspector
 sections rather than special cases.
+
+`render/graph.py` turns a clip's edit into one `RenderPlan`: the filter chain, split at the AI-upscaling boundary,
+plus exact frame windows and audio filters. Both render paths and (from Step 3) the preview read the same plan, so
+they cannot drift apart. Tests check it pixel by pixel with real ffmpeg: a marker block for geometry, frames that
+encode their own index for trim and speed, and a timed tone for audio sync and pitch.
 
 ## Credits
 [ffmpeg](https://ffmpeg.org) · [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (ncnn-vulkan build) · [Qt for Python](https://doc.qt.io/qtforpython/)

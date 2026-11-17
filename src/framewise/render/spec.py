@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..project.edit import Edit
 from ..project.model import MediaItem
 
 
@@ -11,14 +12,31 @@ from ..project.model import MediaItem
 class RenderSpec:
     input: Path
     output: Path
-    upscale: bool
-    preset: str
-    target: str
-    encoder: str
-    quality: int
+    edit: Edit
     max_seconds: float | None = None  # set for previews
     segment_frames: int = 240         # AI path: frames per chunk (bounds disk use, enables resume)
     tile: int = 0                     # AI path: 0 = auto; smaller uses less GPU memory
+
+    # Convenience accessors used by the pipeline, queue and UI
+    @property
+    def upscale(self) -> bool:
+        return self.edit.enhance.upscale
+
+    @property
+    def preset(self) -> str:
+        return self.edit.enhance.preset
+
+    @property
+    def target(self) -> str:
+        return self.edit.enhance.target
+
+    @property
+    def encoder(self) -> str:
+        return self.edit.export.video_codec
+
+    @property
+    def quality(self) -> int:
+        return self.edit.export.quality
 
 
 def auto_output_path(src: Path, suffix: str, output_dir: Path | None = None) -> Path:
@@ -48,6 +66,5 @@ def spec_from_item(item: MediaItem, *, preview: bool = False, output_dir: Path |
         out = auto_output_path(src, suffix, output_dir)
         if not preview:
             out = unique_path(out)
-    return RenderSpec(input=src, output=out, upscale=up.upscale, preset=up.preset, target=up.target,
-                      encoder=ex.video_codec, quality=ex.quality,
+    return RenderSpec(input=src, output=out, edit=item.edit,
                       max_seconds=preview_seconds if preview else None)
