@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..media.probe import MediaInfo
+from ..media.source import SequenceInfo, Source
 from .edit import Edit
 
 
@@ -15,10 +16,25 @@ class MediaItem:
     edit: Edit = field(default_factory=Edit)
     info: MediaInfo | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    sequence: SequenceInfo | None = None  # set when this item is a numbered image sequence
 
     @property
     def name(self) -> str:
+        if self.sequence is not None:
+            return f"{Path(self.sequence.pattern).name.replace('%%', '%')} ({self.sequence.count} frames)"
         return Path(self.path).name
+
+    @property
+    def source(self) -> Source:
+        return Source(Path(self.path), self.sequence)
+
+    @property
+    def kind(self) -> str | None:
+        """Media kind, once known (probed), else guessed from the extension."""
+        from ..media.probe import SEQUENCE, kind_for_extension
+        if self.sequence is not None:
+            return SEQUENCE
+        return self.info.kind if self.info else kind_for_extension(Path(self.path))
 
     def exists(self) -> bool:
         return Path(self.path).is_file()
@@ -51,6 +67,7 @@ class Project:
             "path": rel(i.path),
             "edit": i.edit.to_dict(),
             "info": i.info.to_dict() if i.info else None,
+            **({"sequence": i.sequence.to_dict()} if i.sequence else {}),
         } for i in self.items]}
 
     @classmethod
@@ -66,6 +83,7 @@ class Project:
                     info = MediaInfo.from_dict(raw["info"])
                 except (KeyError, TypeError):
                     info = None  # re-probed later
+            seq = SequenceInfo.from_dict(raw["sequence"]) if isinstance(raw.get("sequence"), dict) else None
             items.append(MediaItem(path=str(p), edit=Edit.from_dict(raw.get("edit")),
-                                   info=info, id=str(raw.get("id") or uuid.uuid4().hex)))
+                                   info=info, id=str(raw.get("id") or uuid.uuid4().hex), sequence=seq))
         return cls(items=items)

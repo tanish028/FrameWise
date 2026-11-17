@@ -58,11 +58,27 @@ FEATURES: dict[str, Feature] = {f.key: f for f in (
     Feature("trim", "Trim", (("setpts",), ("asetpts",), ("apad",), ("atrim",))),  # apad: pre-pad before cut
     Feature("orient", "Rotate and flip", (("transpose",), ("hflip",), ("vflip",))),
     Feature("crop", "Crop", (("crop",),)),
+    Feature("canvas", "Resize (fit / fill / stretch)", (("scale",), ("pad",), ("crop",), ("setsar",))),
+    Feature("blurfill", "Blur fill", (("split",), ("gblur",), ("overlay",))),
+    Feature("color", "Colour adjustments",
+            (("eq",), ("exposure",), ("curves",), ("colortemperature",), ("colorbalance",), ("hue",))),
+    Feature("looks", "Filter presets", (("colorbalance",), ("vibrance",))),
+    Feature("vignette", "Vignette", (("vignette",),)),
+    Feature("sharpen", "Sharpening", (("cas", "unsharp"),), preferred=("cas",),
+            hint="Without ffmpeg's cas filter, sharpening uses unsharp, which can create halos at high strength."),
+    Feature("blur", "Blur", (("gblur",),)),
+    Feature("denoise_fast", "Denoise (fast)", (("hqdn3d",),)),
+    Feature("denoise_quality", "Denoise (quality)", (("nlmeans",),)),
+    Feature("deinterlace", "Deinterlace", (("yadif", "bwdif"),)),
+    Feature("stabilize", "Stabilization", (("vidstabdetect",), ("vidstabtransform",))),
     Feature("speed", "Speed change (audio pitch kept)",
             (("settb",), ("setpts",), ("fps",), ("tpad",), ("rubberband", "atempo"), ("apad",), ("atrim",)),
             preferred=("rubberband",),
             hint="Without ffmpeg's rubberband filter, sounds in slowed-down audio can arrive up to 0.1 s "
                  "before the picture."),
+    Feature("reverse", "Reverse", (("reverse",), ("areverse",))),
+    Feature("audio", "Volume, fades and loudness", (("volume",), ("afade",), ("loudnorm",), ("aresample",))),
+    Feature("gif", "GIF export", (("fps",), ("split",), ("palettegen",), ("paletteuse",))),
 )}
 
 _REINSTALL_HINT = ("On Windows, delete the 'ffmpeg' folder inside FrameWise's tools folder and use "

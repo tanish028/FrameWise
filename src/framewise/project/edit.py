@@ -256,6 +256,7 @@ class Enhance:
     denoise_strength: float = 40
     deinterlace: str = "off"
     sharpen: float = 0
+    blur: float = 0
     stabilize: bool = False
     stab_smoothing: int = 15     # frames each way used to smooth the camera path
     stab_zoom: float = 5         # percent zoom to hide moving edges (crop compensation)
@@ -269,6 +270,7 @@ class Enhance:
             denoise_strength=round(_num(self.denoise_strength, 0, 100, 40)),
             deinterlace=_choice(self.deinterlace, DEINTERLACE_MODES, "off"),
             sharpen=round(_num(self.sharpen, 0, 100, 0)),
+            blur=round(_num(self.blur, 0, 100, 0)),
             stabilize=bool(self.stabilize),
             stab_smoothing=_int(self.stab_smoothing, 1, 60, 15),
             stab_zoom=round(_num(self.stab_zoom, 0, 20, 5), 1),
@@ -311,6 +313,8 @@ class Audio:
 
 
 EXPORT_FORMATS = ("mp4", "mov", "webm", "gif")
+IMAGE_FORMATS = ("png", "jpeg", "webp", "bmp")
+AUDIO_FORMATS = ("mp3", "m4a", "wav", "flac")
 AUDIO_CODECS = ("aac", "opus", "mp3", "pcm")
 RATE_CONTROLS = ("quality", "bitrate", "size")
 QUALITY_RANGE = (10, 35)
@@ -331,6 +335,9 @@ class Export:
     target_mb: float = 50.0     # for rate_control == "size"
     preset_name: str = "custom"  # last applied export preset, for display only
     output: str = ""            # empty = automatic name next to the source
+    image_format: str = "png"   # still images
+    image_quality: int = 92     # JPEG/WebP quality 1-100 (100 = lossless WebP)
+    audio_format: str = "mp3"   # audio-only exports (audio files, "extract audio")
 
     def validated(self) -> "Export":
         lo, hi = QUALITY_RANGE
@@ -347,9 +354,12 @@ class Export:
             rate_control=_choice(self.rate_control, RATE_CONTROLS, "quality"),
             quality=_int(self.quality, lo, hi, 18),
             video_bitrate=_int(self.video_bitrate, 100, 200_000, 8000),
-            target_mb=round(_num(self.target_mb, 0.5, 100_000, 50.0), 2),
+            target_mb=round(_num(self.target_mb, 0.1, 100_000, 50.0), 2),
             preset_name=str(self.preset_name or "custom"),
             output=str(self.output or ""),
+            image_format=_choice(self.image_format, IMAGE_FORMATS, "png"),
+            image_quality=_int(self.image_quality, 1, 100, 92),
+            audio_format=_choice(self.audio_format, AUDIO_FORMATS, "mp3"),
         )
 
 

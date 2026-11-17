@@ -27,8 +27,50 @@ ENCODERS: dict[str, Encoder] = {e.key: e for e in (
     Encoder("hevc_amf", "H.265 · AMD GPU", True),
     Encoder("h264_qsv", "H.264 · Intel GPU", True),
     Encoder("hevc_qsv", "H.265 · Intel GPU", True),
+    Encoder("libvpx-vp9", "VP9 · CPU (WebM)", False),
+    Encoder("libsvtav1", "AV1 · CPU (WebM, smallest, slow)", False),
 )}
 DEFAULT_ENCODER = "libx264"
+
+# Which video encoders each container accepts (GIF uses its own palette encoder)
+FORMAT_ENCODERS = {
+    "mp4": ("libx264", "libx265", "h264_nvenc", "hevc_nvenc", "h264_amf", "hevc_amf", "h264_qsv", "hevc_qsv"),
+    "mov": ("libx264", "libx265", "h264_nvenc", "hevc_nvenc", "h264_amf", "hevc_amf", "h264_qsv", "hevc_qsv"),
+    "webm": ("libvpx-vp9", "libsvtav1"),
+    "gif": (),
+}
+TWO_PASS_ENCODERS = ("libx264", "libvpx-vp9")  # encoders where FrameWise runs a 2-pass target-size encode
+
+
+def encoder_for_format(fmt: str, preferred: str, available: list[str] | None = None) -> str | None:
+    """The preferred encoder if the container accepts it, else the first usable one for that container."""
+    allowed = FORMAT_ENCODERS.get(fmt, ())
+    if not allowed:
+        return None
+    usable = [e for e in allowed if available is None or e in available]
+    if preferred in usable:
+        return preferred
+    return usable[0] if usable else allowed[0]
+
+
+def bitrate_args(key: str, kbps: int) -> list[str]:
+    """Average-bitrate encoding (used for 'bitrate' and 'target size' rate control)."""
+    k = max(50, int(kbps))
+    base = {
+        "libx264": ["-c:v", "libx264", "-preset", "medium"],
+        "libx265": ["-c:v", "libx265", "-preset", "medium", "-tag:v", "hvc1"],
+        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr"],
+        "hevc_nvenc": ["-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr", "-tag:v", "hvc1"],
+        "h264_amf": ["-c:v", "h264_amf", "-rc", "vbr_peak"],
+        "hevc_amf": ["-c:v", "hevc_amf", "-rc", "vbr_peak", "-tag:v", "hvc1"],
+        "h264_qsv": ["-c:v", "h264_qsv"],
+        "hevc_qsv": ["-c:v", "hevc_qsv", "-tag:v", "hvc1"],
+        "libvpx-vp9": ["-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "4", "-row-mt", "1"],
+        "libsvtav1": ["-c:v", "libsvtav1", "-preset", "8"],
+    }
+    if key not in base:
+        raise ValueError(f"Unknown encoder {key!r}")
+    return base[key] + ["-b:v", f"{k}k", "-maxrate", f"{int(k * 1.5)}k", "-bufsize", f"{k * 2}k"]
 
 
 def encoder_args(key: str, quality: int) -> list[str]:
@@ -44,6 +86,10 @@ def encoder_args(key: str, quality: int) -> list[str]:
         "hevc_amf": ["-c:v", "hevc_amf", "-rc", "cqp", "-qp_i", q, "-qp_p", q] + hevc_tag,
         "h264_qsv": ["-c:v", "h264_qsv", "-global_quality", q],
         "hevc_qsv": ["-c:v", "hevc_qsv", "-global_quality", q] + hevc_tag,
+        # VP9/AV1 use their own CRF scales; map FrameWise's 10-35 quality onto comparable values
+        "libvpx-vp9": ["-c:v", "libvpx-vp9", "-crf", str(min(63, round(int(quality) * 1.4 + 6))), "-b:v", "0",
+                       "-deadline", "good", "-cpu-used", "4", "-row-mt", "1"],
+        "libsvtav1": ["-c:v", "libsvtav1", "-crf", str(min(63, int(quality) + 12)), "-preset", "8"],
     }
     try:
         return table[key]

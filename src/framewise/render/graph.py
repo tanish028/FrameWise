@@ -31,7 +31,9 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from fractions import Fraction
 
-from ..media.probe import MediaInfo
+from ..media.probe import IMAGE, MediaInfo
+from ..tools.encoders import encoder_for_format
+from . import ops
 from ..project.edit import CropRect, Edit, Trim
 from .presets import get_preset
 from .scaling import ScalePlan, plan_scaling
@@ -39,20 +41,29 @@ from .scaling import ScalePlan, plan_scaling
 
 class Stage(IntEnum):
     TRIM_RESET = 10
-    DEINTERLACE = 20      # step 6
+    DEINTERLACE = 20
     ORIENT = 30
     CROP = 40
-    DENOISE = 50          # step 6
-    STABILIZE = 60        # step 6
+    DENOISE = 50
+    STABILIZE = 60
     AI_BOUNDARY = 100     # frames leave ffmpeg here when AI upscaling
-    RESIZE = 110
-    CANVAS = 120          # step 4 (alignment / export resolution)
-    COLOR = 130           # step 5
-    LOOK = 140            # step 5 (filter presets)
-    SHARPEN = 150         # step 6
-    FINISH = 160          # step 5 (vignette, fade)
-    TIME = 170
-    FPS = 180
+    RESIZE = 110          # exact upscale size
+    CANVAS = 120          # export resolution with fit / fill / blur fill / stretch
+    COLOR = 130
+    LOOK = 140            # filter presets
+    SHARPEN = 150
+    BLUR = 155
+    FINISH = 160          # vignette
+    REVERSE = 165
+    TIME = 170            # speed: re-timing
+    FPS = 180             # speed: resample to the source frame rate
+    OUT_FPS = 185         # export frame rate
+    FORMAT = 190          # container-specific finishing (GIF palette)
+
+
+# Stages that are not "static per frame": applied in a fixed place by each render path
+TIMING_STAGES = (Stage.REVERSE, Stage.TIME, Stage.FPS)
+FINAL_STAGES = (Stage.OUT_FPS, Stage.FORMAT)
 
 
 @dataclass(frozen=True)
@@ -93,12 +104,25 @@ class RenderPlan:
     out_frames: int
     nodes: tuple[VNode, ...] = field(default=())
     audio_filters: tuple[str, ...] = ()
+    still: bool = False              # a single picture (image export or preview frame)
+    mute: bool = False
+    reverse: bool = False
+    stabilize: bool = False          # needs a vidstabdetect analysis pass first
+    analysis_filters: tuple[str, ...] = ()
+    omitted: tuple[str, ...] = ()    # edits this plan cannot show (e.g. stabilization in a still preview)
+    out_fps: Fraction | None = None  # None = same as source
+    fmt: str = "mp4"
+    video_codec: str | None = "libx264"
 
     # -- derived -------------------------------------------------------------------------
     @property
+    def output_fps(self) -> Fraction:
+        return self.out_fps or self.window.fps
+
+    @property
     def out_duration(self) -> float:
-        """Duration of the rendered video: whole output frames at the source frame rate."""
-        return float(Fraction(self.out_frames) / self.window.fps)
+        """Duration of the rendered video: whole output frames at the output frame rate."""
+        return float(Fraction(self.out_frames) / self.output_fps)
 
     @property
     def requires(self) -> frozenset[str]:
@@ -106,15 +130,24 @@ class RenderPlan:
         for n in self.nodes:
             req |= n.requires
         req |= {f.split("=", 1)[0] for f in self.audio_filters}
+        if self.stabilize:
+            req.add("vidstabdetect")
         return frozenset(req)
 
+    @property
+    def needs_final_encode(self) -> bool:
+        """AI path: chunks are joined into an H.264 master and re-encoded once more (export format,
+        frame rate, rate control). Plain MP4 quality exports keep the Phase 1 direct join."""
+        return self.fmt != "mp4" or self.out_fps is not None or self.video_codec not in (
+            "libx264", "libx265", "h264_nvenc", "hevc_nvenc", "h264_amf", "hevc_amf", "h264_qsv", "hevc_qsv")
+
     def video_filters(self, *, before_ai: bool, timestamp_reset: bool = True) -> list[str]:
-        """Static filters on one side of the AI boundary (timing filters excluded).
+        """Static filters on one side of the AI boundary (timing and final filters excluded).
         `timestamp_reset=False` drops the trim timestamp reset, which is meaningless when frames
         are written out as numbered images."""
         out: list[str] = []
         for n in self.nodes:
-            if n.stage in (Stage.TIME, Stage.FPS):
+            if n.stage in TIMING_STAGES or n.stage in FINAL_STAGES:
                 continue
             if n.stage == Stage.TRIM_RESET and not timestamp_reset:
                 continue
@@ -122,12 +155,18 @@ class RenderPlan:
                 out.extend(n.filters)
         return out
 
+    def reverse_filters(self) -> list[str]:
+        return [f for n in self.nodes if n.stage == Stage.REVERSE for f in n.filters]
+
+    def final_filters(self) -> list[str]:
+        return [f for n in self.nodes if n.stage in FINAL_STAGES for f in n.filters]
+
     def timing_filters(self, start_frame: int = 0) -> list[str]:
         """Speed re-timing for frames numbered from `start_frame` (relative to the window)."""
         return timing_filters(self.rate, self.window.fps, start_frame) if self.rate != 1 else []
 
     def chunk_out_frames(self, start: int, count: int) -> int:
-        """Output frames produced by window frames [start, start+count) (telescopes to out_frames)."""
+        """Output frames (at the source frame rate) produced by window frames [start, start+count)."""
         return round_half_up(Fraction(start + count) / self.rate) - round_half_up(Fraction(start) / self.rate)
 
 
@@ -232,20 +271,89 @@ def compute_window(trim: Trim, info: MediaInfo, max_seconds: float | None) -> tu
 
 # ---------------------------------------------------------------------------------- builder
 
+def audio_chain(edit: Edit, *, trimmed: bool, rate: Fraction, reverse: bool, duration: float,
+                stretcher: str) -> list[str]:
+    """Audio filters for a window of `duration` output seconds (shared by video and audio-only renders)."""
+    audio: list[str] = []
+    if trimmed:
+        audio.append("asetpts=PTS-STARTPTS")
+    if reverse:
+        audio.append("areverse")
+    if rate != 1 or trimmed:
+        # pad before stretching, cut to the exact video length after it (never pad after atempo)
+        audio.append(f"apad=pad_dur={AUDIO_PREPAD}")
+        audio.extend(stretch_filters(rate, stretcher))
+        audio.append(f"atrim=end={duration:.6f}")
+    levels, _ = ops.audio_level_filters(edit.audio.volume_db, edit.audio.normalize)
+    audio.extend(levels)
+    if edit.audio.normalize:
+        audio.append("aresample=48000")  # loudnorm works at 192 kHz internally
+    fades, _ = ops.audio_fade_filters(edit.audio.fade_in, edit.audio.fade_out, duration)
+    audio.extend(fades)
+    return audio
+
+
+@dataclass(frozen=True)
+class AudioPlan:
+    window: Window
+    trimmed: bool
+    rate: Fraction
+    audio_filters: tuple[str, ...]
+    duration: float
+
+    @property
+    def requires(self) -> frozenset[str]:
+        return frozenset(f.split("=", 1)[0] for f in self.audio_filters)
+
+    @property
+    def out_duration(self) -> float:
+        return self.duration
+
+
+def build_audio_plan(edit: Edit, info: MediaInfo, *, max_seconds: float | None = None,
+                     stretcher: str = "rubberband") -> AudioPlan:
+    """Plan an audio-only render (audio files, or the soundtrack extracted from a video)."""
+    if not info.has_audio:
+        raise ValueError("This media has no audio")
+    window, trimmed = compute_window(edit.trim, info, max_seconds)
+    rate = exact_rate(edit.speed.rate)
+    duration = float(Fraction(window.frames) / window.fps / rate)
+    chain = audio_chain(edit, trimmed=trimmed, rate=rate, reverse=bool(edit.speed.reverse),
+                        duration=duration, stretcher=stretcher)
+    return AudioPlan(window, trimmed, rate, tuple(chain), duration)
+
+
 def build_plan(edit: Edit, info: MediaInfo, *, max_seconds: float | None = None,
-               upscale: bool | None = None, stretcher: str = "rubberband") -> RenderPlan:
-    """Plan a render. `upscale` overrides edit.enhance.upscale (None = use the edit);
-    `stretcher` picks the audio tempo filter (the pipeline chooses it from ffmpeg's capabilities).
+               upscale: bool | None = None, stretcher: str = "rubberband",
+               available: frozenset[str] | None = None, still: bool = False) -> RenderPlan:
+    """Plan a render.
+
+    `upscale` overrides edit.enhance.upscale (None = use the edit); `stretcher` picks the audio
+    tempo filter and `available` (ffmpeg's filters, None = assume all) picks alternatives such as
+    unsharp when cas is missing; `still` plans a single picture (image export or preview frame):
+    no timing, audio, stabilization or container finishing.
 
     The edit is used as given: edits coming from a project are already validated, and invalid
     values passed by code (e.g. an upscale target smaller than the source) raise ValueError
     instead of being silently replaced."""
-    window, trimmed = compute_window(edit.trim, info, max_seconds)
-    t = edit.transform
+    is_image = info.kind == IMAGE
+    still = still or is_image
+    if not info.has_video:
+        raise ValueError("This media has no picture; use an audio export")
+    window, trimmed = compute_window(edit.trim, info, max_seconds) if not still else (Window(0, 1, Fraction(info.fps_str)), False)
+    t, e, x = edit.transform, edit.enhance, edit.export
     nodes: list[VNode] = []
+    omitted: list[str] = []
+
+    def add(stage: Stage, built: tuple[list[str], set[str]]) -> None:
+        filters, req = built
+        if filters:
+            nodes.append(VNode(stage, tuple(filters), frozenset(req)))
 
     if trimmed:
         nodes.append(VNode(Stage.TRIM_RESET, ("setpts=PTS-STARTPTS",), frozenset({"setpts"})))
+    if not is_image:
+        add(Stage.DEINTERLACE, ops.deinterlace_filters(e.deinterlace))
 
     orient = orientation_filters(t.rotate, t.flip_h, t.flip_v)
     if orient:
@@ -261,36 +369,84 @@ def build_plan(edit: Edit, info: MediaInfo, *, max_seconds: float | None = None,
             bw, bh = crop.w, crop.h
         else:
             crop = None
+    add(Stage.DENOISE, ops.denoise_filters(e))
 
-    do_upscale = edit.enhance.upscale if upscale is None else upscale
+    stabilize = bool(e.stabilize) and not is_image
+    analysis: tuple[str, ...] = ()
+    if stabilize and still:
+        omitted.append("Stabilization")
+        stabilize = False
+    if stabilize:
+        analysis = tuple(f for n in nodes if n.stage != Stage.TRIM_RESET for f in n.filters) + (
+            ops.stabilize_detect_filter(),)
+        nodes.append(VNode(Stage.STABILIZE, (ops.stabilize_transform_filter(e),), frozenset({"vidstabtransform"})))
+
+    do_upscale = e.upscale if upscale is None else upscale
     scale_plan = model = None
     out_w, out_h = bw, bh
     if do_upscale:
-        preset = get_preset(edit.enhance.preset)
-        scale_plan = plan_scaling(bw, bh, edit.enhance.target, preset.native_scales)
+        preset = get_preset(e.preset)
+        scale_plan = plan_scaling(bw, bh, e.target, preset.native_scales)
         model = preset.model
         out_w, out_h = scale_plan.out_width, scale_plan.out_height
         if scale_plan.needs_resize:
             nodes.append(VNode(Stage.RESIZE, (f"scale={out_w}:{out_h}:flags=lanczos",), frozenset({"scale"})))
 
-    rate = exact_rate(edit.speed.rate)
-    audio: list[str] = []
-    if trimmed:
-        audio.append("asetpts=PTS-STARTPTS")
-    out_frames = max(1, round_half_up(Fraction(window.frames) / rate))
-    if rate != 1:
-        tf = timing_filters(rate, window.fps)
-        nodes.append(VNode(Stage.TIME, tuple(tf[:2]), frozenset({"settb", "setpts"})))
-        nodes.append(VNode(Stage.FPS, (tf[2],), frozenset({"fps", "tpad"})))
-    if rate != 1 or trimmed:
-        # exact length: never shorter than the video (which would cut frames), never longer
-        dur = float(Fraction(out_frames) / window.fps)
-        audio.append(f"apad=pad_dur={AUDIO_PREPAD}")
-        audio.extend(stretch_filters(rate, stretcher))
-        audio.append(f"atrim=end={dur:.6f}")
+    if x.width and x.height:
+        add(Stage.CANVAS, ops.canvas_filters(t.alignment, x.width, x.height))
+        out_w, out_h = x.width, x.height
+
+    color, look_extra = ops.apply_look(edit.color, edit.filter)
+    add(Stage.COLOR, ops.color_filters(color))
+    if look_extra:
+        add(Stage.LOOK, (look_extra, {f.split("=")[0] for f in look_extra}))
+    add(Stage.SHARPEN, ops.sharpen_filters(e.sharpen, available is None or "cas" in available))
+    add(Stage.BLUR, ops.blur_filters(e.blur))
+    add(Stage.FINISH, ops.vignette_filters(color))
+
+    rate = exact_rate(edit.speed.rate) if not still else Fraction(1)
+    reverse = bool(edit.speed.reverse) and not still
+    fmt = x.format if not still else "png"
+    out_fps: Fraction | None = None
+    if still:
+        if edit.speed.rate != 1 or edit.speed.reverse:
+            omitted.append("Speed")
+        out_frames = 1
+    else:
+        if reverse:
+            nodes.append(VNode(Stage.REVERSE, ("reverse",), frozenset({"reverse"})))
+        base_frames = max(1, round_half_up(Fraction(window.frames) / rate))
+        if rate != 1:
+            tf = timing_filters(rate, window.fps)
+            nodes.append(VNode(Stage.TIME, tuple(tf[:2]), frozenset({"settb", "setpts"})))
+            nodes.append(VNode(Stage.FPS, (tf[2],), frozenset({"fps", "tpad"})))
+        if fmt == "gif":
+            out_fps = Fraction(str(x.fps)) if x.fps else min(window.fps, Fraction(15))
+            out_fps = Fraction(out_fps).limit_denominator(1001)
+        elif x.fps and Fraction(str(x.fps)).limit_denominator(1001) != window.fps:
+            out_fps = Fraction(str(x.fps)).limit_denominator(1001)
+        if out_fps is not None and out_fps != window.fps:
+            out_frames = max(1, round_half_up(Fraction(base_frames) / window.fps * out_fps))
+            if fmt != "gif":
+                nodes.append(VNode(Stage.OUT_FPS, (f"fps={out_fps.numerator}/{out_fps.denominator}",),
+                                   frozenset({"fps"})))
+        else:
+            out_frames = base_frames
+            if fmt == "gif":
+                out_fps = window.fps
+        if fmt == "gif":
+            add(Stage.FORMAT, ops.gif_filters(f"{out_fps.numerator}/{out_fps.denominator}"))
+
+    mute = still or edit.audio.mute or fmt == "gif" or not info.has_audio
+    audio: list[str] = [] if mute else audio_chain(
+        edit, trimmed=trimmed, rate=rate, reverse=reverse,
+        duration=float(Fraction(out_frames) / (out_fps or window.fps)), stretcher=stretcher)
 
     nodes.sort(key=lambda n: n.stage)
+    codec = encoder_for_format(fmt, x.video_codec) if not still else None
     return RenderPlan(window=window, fps_str=info.fps_str, trimmed=trimmed, rate=rate,
                       oriented_size=(ow, oh), crop=crop, base_size=(bw, bh), upscale=scale_plan,
                       model=model, out_size=(out_w, out_h), out_frames=out_frames,
-                      nodes=tuple(nodes), audio_filters=tuple(audio))
+                      nodes=tuple(nodes), audio_filters=tuple(audio), still=still, mute=mute, reverse=reverse,
+                      stabilize=stabilize, analysis_filters=analysis, omitted=tuple(omitted),
+                      out_fps=out_fps, fmt=fmt, video_codec=codec)
